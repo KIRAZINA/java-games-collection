@@ -59,6 +59,14 @@ A complete implementation of the classic 2048 game using Java 17 and Swing with 
    java -cp bin com.KIRA_ZINA.app.Main
    ```
 
+### Running Tests
+
+To run the unit tests, verify you have Maven installed and run:
+
+```bash
+mvn test
+```
+
 ### Option 2: Using an IDE (IntelliJ IDEA, Eclipse, VS Code)
 
 1. Open the `2048-game` folder as a project
