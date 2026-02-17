@@ -11,12 +11,6 @@ import com.KIRA_ZINA.app.strategy.AggressiveDealerStrategy;
 public class Main {
     public static void main(String[] args) {
         GameController game = new GameController();
-        
-        // You can change the dealer strategy here
-        // game.setDealerStrategy(new ConservativeDealerStrategy());
-        // game.setDealerStrategy(new AggressiveDealerStrategy());
-        // Default is BasicDealerStrategy
-        
         game.startGame();
     }
 }

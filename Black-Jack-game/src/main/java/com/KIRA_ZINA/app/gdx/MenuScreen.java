@@ -76,7 +76,7 @@ public class MenuScreen implements Screen {
         playButton.addListener(new ClickListener() {
             @Override
             public void clicked(InputEvent event, float x, float y) {
-                game.setScreen(new GameScreen(game));
+                game.setScreen(new DifficultySelectionScreen(game));
                 dispose();
             }
         });

@@ -35,6 +35,10 @@ public class GameController {
      */
     public void startGame() {
         view.displayWelcomeMessage();
+        
+        // Let player choose difficulty
+        selectDifficulty();
+        
         view.displayBankroll(model.getBankroll());
         
         boolean playAgain = true;
@@ -204,6 +208,50 @@ public class GameController {
                 String input = view.promptPlayAgain();
                 String choice = InputValidator.validateYesNoInput(input);
                 return choice.equals("y");
+            } catch (InvalidPlayerInputException e) {
+                view.displayError(e.getMessage());
+            }
+        }
+    }
+    
+    /**
+     * Prompts user to select dealer difficulty
+     */
+    private void selectDifficulty() {
+        System.out.println("\n" + ConsoleColors.CYAN + "═══════════════════════════════════════" + ConsoleColors.RESET);
+        System.out.println(ConsoleColors.YELLOW + "        SELECT DEALER DIFFICULTY" + ConsoleColors.RESET);
+        System.out.println(ConsoleColors.CYAN + "═══════════════════════════════════════" + ConsoleColors.RESET);
+        System.out.println();
+        System.out.println(ConsoleColors.GREEN + "1. BASIC" + ConsoleColors.RESET);
+        System.out.println("   Standard casino rules");
+        System.out.println("   Dealer hits until 17, stands on 17+");
+        System.out.println();
+        System.out.println(ConsoleColors.YELLOW + "2. CONSERVATIVE" + ConsoleColors.RESET);
+        System.out.println("   Easier difficulty");
+        System.out.println("   Dealer plays cautiously, stands on 16+");
+        System.out.println();
+        System.out.println(ConsoleColors.RED + "3. AGGRESSIVE" + ConsoleColors.RESET);
+        System.out.println("   Harder difficulty");
+        System.out.println("   Dealer takes risks, hits until 18");
+        System.out.println();
+        System.out.println(ConsoleColors.CYAN + "═══════════════════════════════════════" + ConsoleColors.RESET);
+        
+        while (true) {
+            try {
+                System.out.print("Enter your choice (1-3): ");
+                String input = scanner.nextLine().trim();
+                
+                DealerStrategy selectedStrategy = switch (input) {
+                    case "1" -> new BasicDealerStrategy();
+                    case "2" -> new ConservativeDealerStrategy();
+                    case "3" -> new AggressiveDealerStrategy();
+                    default -> throw new InvalidPlayerInputException("Please enter 1, 2, or 3");
+                };
+                
+                model.setDealerStrategy(selectedStrategy);
+                System.out.println(ConsoleColors.GREEN + "\nDifficulty set to: " + selectedStrategy.getStrategyName() + ConsoleColors.RESET);
+                System.out.println();
+                break;
             } catch (InvalidPlayerInputException e) {
                 view.displayError(e.getMessage());
             }

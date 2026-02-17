@@ -4,7 +4,7 @@ import com.KIRA_ZINA.app.core.GameModel;
 import com.KIRA_ZINA.app.exception.GameException;
 import com.KIRA_ZINA.app.exception.InvalidCardOperationException;
 import com.KIRA_ZINA.app.model.Card;
-import com.KIRA_ZINA.app.strategy.BasicDealerStrategy;
+import com.KIRA_ZINA.app.strategy.DealerStrategy;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Screen;
 import com.badlogic.gdx.graphics.Color;
@@ -46,6 +46,11 @@ public class GameScreen implements Screen {
     private GameModel model;
     private GameState gameState;
     private double selectedBet;
+    private DealerStrategy dealerStrategy;
+    
+    // Card rendering cache
+    private Texture cardBackTexture;
+    private java.util.Map<String, Texture> cardTextureCache;
 
     private Label bankrollLabel;
     private Label betLabel;
@@ -69,10 +74,11 @@ public class GameScreen implements Screen {
         ROUND_END
     }
 
-    public GameScreen(BlackjackGdxGame game) {
+    public GameScreen(BlackjackGdxGame game, DealerStrategy strategy) {
         this.game = game;
         this.batch = game.getBatch();
         this.selectedBet = DEFAULT_BET;
+        this.dealerStrategy = strategy;
         create();
         initializeModel();
         prepareRound();
@@ -86,12 +92,17 @@ public class GameScreen implements Screen {
         Gdx.input.setInputProcessor(stage);
 
         skin = createDefaultSkin();
+        
+        // Initialize card texture cache
+        cardTextureCache = new java.util.HashMap<>();
+        cardBackTexture = CardRenderer.createCardBackTexture();
+        
         createUI();
     }
 
     private void initializeModel() {
         model = new GameModel(INITIAL_BALANCE);
-        model.setDealerStrategy(new BasicDealerStrategy());
+        model.setDealerStrategy(dealerStrategy);
     }
 
     private void createUI() {
@@ -216,7 +227,7 @@ public class GameScreen implements Screen {
         menuButton.addListener(new ClickListener() {
             @Override
             public void clicked(InputEvent event, float x, float y) {
-                game.setScreen(new MenuScreen(game));
+                game.setScreen(new DifficultySelectionScreen(game));
                 dispose();
             }
         });
@@ -457,60 +468,39 @@ public class GameScreen implements Screen {
     }
 
     private void drawCard(Card card, float x, float y, boolean faceUp) {
-        Texture texture;
-        if (faceUp) {
-            texture = Assets.getCardTexture(game.getAssetManager(), card.getSuit(), card.getRank());
-        } else {
-            texture = Assets.getCardBackTexture(game.getAssetManager());
+        if (!faceUp) {
+            // Draw card back
+            batch.draw(cardBackTexture, x, y, CARD_WIDTH, CARD_HEIGHT);
+            return;
         }
-
-        if (texture != null) {
-            batch.draw(texture, x, y, CARD_WIDTH, CARD_HEIGHT);
-        } else {
-            drawPlaceholderCard(x, y, faceUp, card);
+        
+        // Try to get card texture from asset manager first
+        Texture assetTexture = Assets.getCardTexture(game.getAssetManager(), card.getSuit(), card.getRank());
+        if (assetTexture != null) {
+            batch.draw(assetTexture, x, y, CARD_WIDTH, CARD_HEIGHT);
+            return;
         }
-    }
-
-    private void drawPlaceholderCard(float x, float y, boolean faceUp, Card card) {
-        batch.setColor(Color.WHITE);
+        
+        // Use cached or create new card texture
+        String cardKey = card.getSuit().name() + "_" + card.getRank().name();
+        Texture cardTexture = cardTextureCache.get(cardKey);
+        
+        if (cardTexture == null) {
+            cardTexture = CardRenderer.createCardTexture(card.getSuit(), card.getRank());
+            cardTextureCache.put(cardKey, cardTexture);
+        }
+        
+        // Draw the card background
+        batch.draw(cardTexture, x, y, CARD_WIDTH, CARD_HEIGHT);
+        
+        // Draw the card text (rank and suit symbols)
+        batch.end();
+        batch.begin();
         BitmapFont font = skin.getFont("default-font");
-        font.setColor(faceUp ? Color.BLACK : Color.WHITE);
-
-        String cardText;
-        if (faceUp && card != null) {
-            cardText = getCardSymbol(card) + "\n" + getSuitSymbol(card.getSuit());
-        } else {
-            cardText = "???";
-        }
-        font.draw(batch, cardText, x + 15, y + CARD_HEIGHT - 30);
+        CardRenderer.drawCardText(batch, font, card, x, y, CARD_WIDTH, CARD_HEIGHT);
     }
 
-    private String getCardSymbol(Card card) {
-        return switch (card.getRank()) {
-            case ACE -> "A";
-            case TWO -> "2";
-            case THREE -> "3";
-            case FOUR -> "4";
-            case FIVE -> "5";
-            case SIX -> "6";
-            case SEVEN -> "7";
-            case EIGHT -> "8";
-            case NINE -> "9";
-            case TEN -> "10";
-            case JACK -> "J";
-            case QUEEN -> "Q";
-            case KING -> "K";
-        };
-    }
 
-    private String getSuitSymbol(Card.Suit suit) {
-        return switch (suit) {
-            case HEARTS -> "H";
-            case DIAMONDS -> "D";
-            case CLUBS -> "C";
-            case SPADES -> "S";
-        };
-    }
 
     @Override
     public void resize(int width, int height) {
@@ -534,5 +524,16 @@ public class GameScreen implements Screen {
     public void dispose() {
         stage.dispose();
         skin.dispose();
+        
+        // Dispose cached card textures
+        if (cardBackTexture != null) {
+            cardBackTexture.dispose();
+        }
+        if (cardTextureCache != null) {
+            for (Texture texture : cardTextureCache.values()) {
+                texture.dispose();
+            }
+            cardTextureCache.clear();
+        }
     }
 }
