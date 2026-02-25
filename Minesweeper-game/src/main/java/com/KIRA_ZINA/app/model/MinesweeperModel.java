@@ -88,20 +88,50 @@ public class MinesweeperModel {
      * Called on the first valid click.
      */
     private void placeMines(int safeRow, int safeCol) {
-        int minesPlaced = 0;
-        while (minesPlaced < totalMines) {
-            int r = random.nextInt(rows);
-            int c = random.nextInt(cols);
+        List<Cell> outsideSafeZone = new ArrayList<>();
+        List<Cell> safeZoneNeighbors = new ArrayList<>();
+        Cell firstClickCell = grid[safeRow][safeCol];
 
-            // Create 3x3 safe zone around first click
-            boolean isSafeZone = Math.abs(r - safeRow) <= 1 && Math.abs(c - safeCol) <= 1;
-
-            // Don't place mine on existing mine or in safe zone
-            if (!grid[r][c].isMine() && !isSafeZone) {
-                grid[r][c].setMine(true);
-                minesPlaced++;
+        for (int r = 0; r < rows; r++) {
+            for (int c = 0; c < cols; c++) {
+                if (r == safeRow && c == safeCol) continue;
+                
+                boolean isNeighbor = Math.abs(r - safeRow) <= 1 && Math.abs(c - safeCol) <= 1;
+                if (isNeighbor) {
+                    safeZoneNeighbors.add(grid[r][c]);
+                } else {
+                    outsideSafeZone.add(grid[r][c]);
+                }
             }
         }
+
+        // Shuffle candidates
+        java.util.Collections.shuffle(outsideSafeZone, random);
+        java.util.Collections.shuffle(safeZoneNeighbors, random);
+
+        int minesPlaced = 0;
+        
+        // 1. Fill from outside the safe zone first
+        for (Cell cell : outsideSafeZone) {
+            if (minesPlaced >= totalMines) break;
+            cell.setMine(true);
+            minesPlaced++;
+        }
+
+        // 2. If we still need more mines, fill from safe zone neighbors
+        for (Cell cell : safeZoneNeighbors) {
+            if (minesPlaced >= totalMines) break;
+            cell.setMine(true);
+            minesPlaced++;
+        }
+
+        // 3. If we STILL need more mines (extremely rare case where totalMines == rows * cols),
+        // we have to put one in the first click cell
+        if (minesPlaced < totalMines) {
+            firstClickCell.setMine(true);
+            minesPlaced++;
+        }
+
         calculateAdjacentMines();
     }
 

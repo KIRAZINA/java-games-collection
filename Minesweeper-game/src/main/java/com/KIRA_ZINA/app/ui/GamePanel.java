@@ -10,6 +10,10 @@ import java.awt.*;
  * Main game grid panel. Connects Model and View components.
  */
 public class GamePanel extends JPanel implements MinesweeperModel.GameListener {
+    // High contrast color scheme
+    private static final Color GRID_BACKGROUND = new Color(235, 235, 235); // Darker background
+    private static final Color GRID_BORDER = new Color(158, 158, 158); // Stronger border
+    
     private final MinesweeperModel model;
     private final TopPanel topPanel;
     private final CellButton[][] buttons;
@@ -24,13 +28,14 @@ public class GamePanel extends JPanel implements MinesweeperModel.GameListener {
         this.model = new MinesweeperModel(rows, cols, mines);
         this.model.addListener(this);
 
-        // Initialize UI Grid
+        // Initialize UI Grid with high contrast styling
         this.buttons = new CellButton[rows][cols];
-        setLayout(new GridLayout(rows, cols));
-        setBackground(Color.DARK_GRAY);
-        setBorder(BorderFactory.createLineBorder(Color.GRAY, 4));
-
-        // Create Buttons
+        setLayout(new GridLayout(rows, cols, 2, 2)); // Increase spacing between cells
+        setBackground(GRID_BACKGROUND);
+        setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(GRID_BORDER, 3),
+            BorderFactory.createEmptyBorder(12, 12, 12, 12)
+        ));
         for (int r = 0; r < rows; r++) {
             for (int c = 0; c < cols; c++) {
                 CellButton btn = new CellButton(r, c, this);
@@ -51,14 +56,14 @@ public class GamePanel extends JPanel implements MinesweeperModel.GameListener {
      * Called by CellButton when mouse is pressed on any cell.
      */
     public void onCellPressed() {
-        topPanel.setScaredFace();
+        if (topPanel != null) topPanel.setScaredFace();
     }
 
     /**
      * Called by CellButton when mouse is released on any cell.
      */
     public void onCellReleased() {
-        topPanel.setNormalFace();
+        if (topPanel != null) topPanel.setNormalFace();
     }
 
     /**
@@ -69,7 +74,7 @@ public class GamePanel extends JPanel implements MinesweeperModel.GameListener {
 
         // Start timer on first valid click
         if (!model.isFirstClickDone()) {
-            topPanel.startTimer();
+            if (topPanel != null) topPanel.startTimer();
         }
 
         model.openCell(r, c);
@@ -122,13 +127,15 @@ public class GamePanel extends JPanel implements MinesweeperModel.GameListener {
     }
 
     private void updateMineCounter() {
-        topPanel.updateMineCounter(model.getRemainingMines());
+        if (topPanel != null) {
+            topPanel.updateMineCounter(model.getRemainingMines());
+        }
     }
 
     public void resetGame() {
         model.reset();
         gameOver = false;
-        topPanel.resetTimer();
+        if (topPanel != null) topPanel.resetTimer();
         // Force visual update of all cells
         onFullRefresh();
     }
@@ -138,10 +145,12 @@ public class GamePanel extends JPanel implements MinesweeperModel.GameListener {
     @Override
     public void onGameStateChanged(boolean won, boolean lost) {
         gameOver = true;
-        if (won) {
-            topPanel.setCoolFace();
-        } else {
-            topPanel.setSadFace();
+        if (topPanel != null) {
+            if (won) {
+                topPanel.setCoolFace();
+            } else {
+                topPanel.setSadFace();
+            }
         }
     }
 
