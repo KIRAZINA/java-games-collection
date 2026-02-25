@@ -2,6 +2,7 @@ package com.KIRA_ZINA.app;
 
 import com.KIRA_ZINA.app.ui.MainFrame;
 import com.KIRA_ZINA.app.ui.StartScreen;
+import com.KIRA_ZINA.app.ui.DifficultyScreen;
 
 import javax.swing.*;
 import java.awt.event.WindowAdapter;
@@ -40,7 +41,7 @@ public class MinesweeperApp {
         });
         
         StartScreen startScreen = new StartScreen(
-            () -> startGame(),  // onStartGame
+            () -> showDifficultyScreen(),  // onStartGame - now shows difficulty screen
             () -> confirmExit() // onExit
         );
         
@@ -51,7 +52,21 @@ public class MinesweeperApp {
         mainFrame.setVisible(true);
     }
     
-    private static void startGame() {
+    private static void showDifficultyScreen() {
+        // Show difficulty selection screen
+        DifficultyScreen difficultyScreen = new DifficultyScreen(
+            (difficultyIndex) -> startGame(difficultyIndex),  // onDifficultySelected
+            () -> showStartScreen()  // onBack - return to start screen
+        );
+        
+        mainFrame.setContentPane(difficultyScreen);
+        mainFrame.revalidate();
+        mainFrame.repaint();
+        mainFrame.pack();
+        mainFrame.setLocationRelativeTo(null);
+    }
+    
+    private static void startGame(int difficultyIndex) {
         if (gameStarted) return;
         gameStarted = true;
         
@@ -59,9 +74,9 @@ public class MinesweeperApp {
         mainFrame.setVisible(false);
         mainFrame.dispose();
         
-        // Create and show game window
+        // Create and show game window with selected difficulty
         SwingUtilities.invokeLater(() -> {
-            MainFrame gameFrame = new MainFrame();
+            MainFrame gameFrame = new MainFrame(difficultyIndex);
             // Add window listener for returning to start screen
             gameFrame.addWindowListener(new WindowAdapter() {
                 @Override

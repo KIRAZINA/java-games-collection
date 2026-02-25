@@ -31,6 +31,10 @@ public class MainFrame extends JFrame {
     };
 
     public MainFrame() {
+        this(0); // Default to Beginner
+    }
+    
+    public MainFrame(int difficultyIndex) {
         super("Minesweeper - Modern Edition");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         
@@ -65,8 +69,8 @@ public class MainFrame extends JFrame {
         ));
         gameContainer.add(topPanel, BorderLayout.NORTH);
 
-        // Start with Beginner difficulty
-        startNewGame(0);
+        // Start with the selected difficulty
+        startNewGame(difficultyIndex);
 
         add(gameContainer);
         pack();
