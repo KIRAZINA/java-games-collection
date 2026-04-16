@@ -1,0 +1,50 @@
+# Maven and Java build output
+target/
+bin/
+out/
+*.class
+*.jar
+*.war
+*.ear
+dependency-reduced-pom.xml
+
+# Packaging output
+build/
+dist/
+
+# Logs
+*.log
+hs_err_pid*
+replay_pid*
+
+# IDE and editor files
+.idea/
+.vscode/
+.settings/
+.classpath
+.project
+nbproject/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*.user
+*.code-workspace
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test and coverage artifacts
+surefire-reports/
+failsafe-reports/
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+*~
