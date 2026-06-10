@@ -14,6 +14,7 @@ public record BlackjackState(
         List<Card> dealerCards,
         Integer dealerValue,
         int cardsRemaining,
-        boolean canContinue
+        boolean canContinue,
+        List<String> notifications
 ) {
 }

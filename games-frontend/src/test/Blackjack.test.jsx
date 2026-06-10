@@ -13,9 +13,15 @@ vi.mock('../api/api.js', () => ({
     stand: vi.fn(),
     closeSession: vi.fn(),
   },
+  roomsApi: {
+    registerSession: vi.fn(),
+    getRoomProgress: vi.fn(),
+    joinRoom: vi.fn(),
+    leaveRoom: vi.fn(),
+  },
 }));
 
-import { blackjackApi } from '../api/api.js';
+import { blackjackApi, roomsApi } from '../api/api.js';
 
 // ─── Shared test state fixtures ───────────────────────────────────────────────
 const bettingState = {
@@ -30,6 +36,7 @@ const bettingState = {
   dealerValue: null,
   cardsRemaining: 52,
   canContinue: true,
+  notifications: [],
 };
 
 const playerTurnState = {
@@ -41,6 +48,7 @@ const playerTurnState = {
   playerValue: 17,
   dealerCards: [{ rank: 'EIGHT', suit: 'CLUBS' }],
   dealerValue: null,
+  notifications: [],
 };
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -70,9 +78,9 @@ describe('Blackjack Component', () => {
     await waitFor(() => expect(screen.getByText('BETTING')).toBeInTheDocument());
   });
 
-  it('displays balance from server state', async () => {
+  it('displays balance amount from server state', async () => {
     render(<Blackjack />);
-    await waitFor(() => expect(screen.getByText(/Balance: \$100\.00/)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('$100.00')).toBeInTheDocument());
   });
 
   // ── Button States ──────────────────────────────────────────────────────────
@@ -173,5 +181,111 @@ describe('Blackjack Component', () => {
 
     await user.click(screen.getByRole('button', { name: /Stand/i }));
     expect(blackjackApi.stand).toHaveBeenCalledWith('sess-1');
+  });
+
+  // ── Notifications ──────────────────────────────────────────────────────
+
+  it('renders notification messages from state', async () => {
+    const stateWithNotifications = {
+      ...bettingState, notifications: ['Blackjack! You win 3:2!'],
+    };
+    blackjackApi.createSession.mockResolvedValue(stateWithNotifications);
+    render(<Blackjack />);
+    await waitFor(() => {
+      expect(screen.getByText(/Blackjack! You win 3:2!/)).toBeInTheDocument();
+    });
+  });
+
+  // ── Bankruptcy Banner ──────────────────────────────────────────────────
+
+  it('shows bankruptcy banner when balance is 0 and phase is ROUND_OVER', async () => {
+    const bankruptState = {
+      ...bettingState, phase: 'ROUND_OVER', winner: 'DEALER',
+      balance: 0, currentBet: 0, canContinue: false,
+    };
+    blackjackApi.createSession.mockResolvedValue(bankruptState);
+    render(<Blackjack />);
+    await waitFor(() => {
+      expect(screen.getByText(/out of funds/i)).toBeInTheDocument();
+    });
+  });
+
+  it('does not show bankruptcy banner when balance > 0', async () => {
+    const roundOverState = {
+      ...bettingState, phase: 'ROUND_OVER', winner: 'PLAYER',
+      balance: 110, currentBet: 0,
+    };
+    blackjackApi.createSession.mockResolvedValue(roundOverState);
+    render(<Blackjack />);
+    await waitFor(() => screen.getByText('ROUND_OVER'));
+    expect(screen.queryByText(/out of funds/i)).toBeNull();
+  });
+
+  // ── Countdown Timer ────────────────────────────────────────────────────
+
+  it('shows countdown message after round ends', async () => {
+    const roundOverState = {
+      ...bettingState, phase: 'ROUND_OVER', winner: 'DEALER',
+      balance: 90, currentBet: 0,
+    };
+    blackjackApi.createSession.mockResolvedValue(roundOverState);
+    render(<Blackjack />);
+    await waitFor(() => {
+      expect(screen.getByText(/Next round starts in:/)).toBeInTheDocument();
+    });
+  });
+
+  // ── Dealer Masking ─────────────────────────────────────────────────────
+
+  it('masks dealer second card during player turn', async () => {
+    const twoCardDealerState = {
+      ...playerTurnState,
+      dealerCards: [
+        { rank: 'EIGHT', suit: 'CLUBS' },
+        { rank: 'KING', suit: 'HEARTS' },
+      ],
+    };
+    blackjackApi.createSession.mockResolvedValue(twoCardDealerState);
+    render(<Blackjack />);
+    await waitFor(() => screen.getByText('PLAYER_TURN'));
+
+    const cardBacks = document.querySelectorAll('.card-back');
+    expect(cardBacks.length).toBe(1);
+  });
+
+  it('shows dealer value as ? during player turn', async () => {
+    const twoCardDealerState = {
+      ...playerTurnState,
+      dealerCards: [
+        { rank: 'EIGHT', suit: 'CLUBS' },
+        { rank: 'KING', suit: 'HEARTS' },
+      ],
+    };
+    blackjackApi.createSession.mockResolvedValue(twoCardDealerState);
+    render(<Blackjack />);
+    await waitFor(() => screen.getByText('PLAYER_TURN'));
+
+    const dealerSections = screen.getAllByText('Dealer');
+    const inHandPanel = dealerSections.find(el => el.closest('section'));
+    expect(inHandPanel.closest('section').textContent).toContain('?');
+  });
+
+  // ── Exit Button ────────────────────────────────────────────────────────
+
+  it('renders Exit Room button when onExit prop is provided', async () => {
+    const onExit = vi.fn();
+    render(<Blackjack onExit={onExit} />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Exit Room/i })).toBeInTheDocument();
+    });
+  });
+
+  it('calls onExit when Exit Room button is clicked', async () => {
+    const onExit = vi.fn();
+    render(<Blackjack onExit={onExit} />);
+    await waitFor(() => screen.getByText('BETTING'));
+
+    await user.click(screen.getByRole('button', { name: /Exit Room/i }));
+    expect(onExit).toHaveBeenCalledTimes(1);
   });
 });

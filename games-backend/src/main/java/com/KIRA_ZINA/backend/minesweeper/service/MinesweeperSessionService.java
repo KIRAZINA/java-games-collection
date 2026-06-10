@@ -44,6 +44,10 @@ public class MinesweeperSessionService {
         return requireSession(sessionId).reset();
     }
 
+    public MinesweeperState nextBoard(String sessionId) {
+        return requireSession(sessionId).nextBoard();
+    }
+
     public void closeSession(String sessionId) {
         MinesweeperSession session = sessions.remove(sessionId);
         if (session != null) {

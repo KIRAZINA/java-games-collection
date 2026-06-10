@@ -34,7 +34,7 @@ import org.springframework.test.web.servlet.MvcResult;
  * error handling, and @Scheduled session eviction.
  */
 @SpringBootTest(properties = "logging.level.root=WARN")
-@AutoConfigureMockMvc
+@AutoConfigureMockMvc(addFilters = false)
 @DisplayName("Games Backend Integration Tests")
 class GamesBackendIntegrationTest {
 
@@ -446,6 +446,190 @@ class GamesBackendIntegrationTest {
         }
     }
 
+    // ============================================================ Rooms
+
+    @Nested
+    @DisplayName("Rooms Controller")
+    class RoomsController {
+
+        @Test
+        @DisplayName("POST /api/rooms → 201 CREATED")
+        void createRoom_201() throws Exception {
+            mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName":"Test Room",
+                                        "gameType":"BLACKJACK",
+                                        "ownerId":"owner1",
+                                        "ownerName":"Alice"
+                                    }"""))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.roomId", notNullValue()))
+                    .andExpect(jsonPath("$.roomName").value("Test Room"))
+                    .andExpect(jsonPath("$.gameType").value("BLACKJACK"))
+                    .andExpect(jsonPath("$.state").value("WAITING"))
+                    .andExpect(jsonPath("$.playerCount").value(1));
+        }
+
+        @Test
+        @DisplayName("GET /api/rooms?type=BLACKJACK → 200 OK with created room")
+        void listRoomsByType_200() throws Exception {
+            mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName":"BJ Room",
+                                        "gameType":"BLACKJACK",
+                                        "ownerId":"owner2",
+                                        "ownerName":"Bob"
+                                    }"""))
+                    .andExpect(status().isCreated());
+
+            mockMvc.perform(get("/api/rooms?type=BLACKJACK"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$[0].roomName").value("BJ Room"));
+        }
+
+        @Test
+        @DisplayName("GET /api/rooms/{roomId} → 200 OK with room details")
+        void getRoom_200() throws Exception {
+            MvcResult created = mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName":"Get Room",
+                                        "gameType":"MINESWEEPER",
+                                        "ownerId":"owner3",
+                                        "ownerName":"Carol"
+                                    }"""))
+                    .andExpect(status().isCreated()).andReturn();
+            String roomId = roomSessionId(created);
+
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.roomId").value(roomId))
+                    .andExpect(jsonPath("$.roomName").value("Get Room"))
+                    .andExpect(jsonPath("$.gameType").value("MINESWEEPER"));
+        }
+
+        @Test
+        @DisplayName("POST /{roomId}/join → 200 OK, playerCount increments")
+        void joinRoom_200() throws Exception {
+            MvcResult created = mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName":"Join Room",
+                                        "gameType":"BLACKJACK",
+                                        "ownerId":"owner4",
+                                        "ownerName":"Dave"
+                                    }"""))
+                    .andExpect(status().isCreated()).andReturn();
+            String roomId = roomSessionId(created);
+
+            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId":"player5",
+                                        "playerName":"Eve"
+                                    }"""))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(2));
+        }
+
+        @Test
+        @DisplayName("DELETE /{roomId}/leave → 204 NO CONTENT, playerCount decrements")
+        void leaveRoom_204() throws Exception {
+            MvcResult created = mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName":"Leave Room",
+                                        "gameType":"TWENTY_FORTY_EIGHT",
+                                        "ownerId":"owner6",
+                                        "ownerName":"Frank"
+                                    }"""))
+                    .andExpect(status().isCreated()).andReturn();
+            String roomId = roomSessionId(created);
+
+            // Owner leaves — room has 0 players and gets removed immediately
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId":"owner6"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            // Room should be gone
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("Full room lifecycle: create → join → get → leave → cleanup")
+        void roomFullLifecycle() throws Exception {
+            // Create
+            MvcResult created = mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName":"Lifecycle",
+                                        "gameType":"BLACKJACK",
+                                        "ownerId":"lifecycle-owner",
+                                        "ownerName":"Grace"
+                                    }"""))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.playerCount").value(1))
+                    .andReturn();
+            String roomId = roomSessionId(created);
+
+            // Join
+            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId":"lifecycle-player",
+                                        "playerName":"Heidi"
+                                    }"""))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(2));
+
+            // Get — confirm room exists with 2 players
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(2));
+
+            // Join player leaves — 1 remaining
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId":"lifecycle-player"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            // Room still exists (owner still there)
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(1));
+
+            // Owner leaves — room removed
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId":"lifecycle-owner"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isBadRequest());
+        }
+    }
+
     // ============================================================ Helpers
 
     private MvcResult createBlackjackSession(int balance) throws Exception {
@@ -459,6 +643,11 @@ class GamesBackendIntegrationTest {
     private String sessionId(MvcResult result) throws Exception {
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
         return json.get("sessionId").asText();
+    }
+
+    private String roomSessionId(MvcResult result) throws Exception {
+        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
+        return json.get("roomId").asText();
     }
 
     @SuppressWarnings("unchecked")

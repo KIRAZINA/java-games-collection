@@ -84,10 +84,12 @@ export const minesweeperApi = {
       method: 'POST',
       body: JSON.stringify({ row, col }),
     }),
-  reset: (sessionId) =>
-    api(`/api/minesweeper/sessions/${sessionId}/reset`, { method: 'POST' }),
-  closeSession: (sessionId) =>
-    api(`/api/minesweeper/sessions/${sessionId}`, { method: 'DELETE' }),
+   reset: (sessionId) =>
+      api(`/api/minesweeper/sessions/${sessionId}/reset`, { method: 'POST' }),
+   nextBoard: (sessionId) =>
+      api(`/api/minesweeper/sessions/${sessionId}/next-board`, { method: 'POST' }),
+   closeSession: (sessionId) =>
+      api(`/api/minesweeper/sessions/${sessionId}`, { method: 'DELETE' }),
 };
 
 // ─── 2048 ─────────────────────────────────────────────────────────────────────
@@ -132,7 +134,8 @@ export const roomsApi = {
       method: 'DELETE',
       body: JSON.stringify({ requesterId }),
     }),
-  getRoomState: (roomId) => api(`/api/rooms/${roomId}/state`),
+   getRoomState: (roomId) => api(`/api/rooms/${roomId}/state`),
+   getRoomProgress: (roomId) => api(`/api/rooms/${roomId}/progress`),
   registerSession: (roomId, playerId, sessionId) =>
     api(`/api/rooms/${roomId}/sessions`, {
       method: 'POST',

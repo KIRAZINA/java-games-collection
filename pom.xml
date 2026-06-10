@@ -10,10 +10,7 @@
     <packaging>pom</packaging>
 
     <modules>
-        <module>2048-game</module>
-        <module>Minesweeper-game</module>
-        <module>Black-Jack-game</module>
-        <module>games-launcher</module>
+        <module>games-backend</module>
     </modules>
 
     <properties>

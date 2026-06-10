@@ -6,6 +6,8 @@ import com.KIRA_ZINA.backend.minesweeper.domain.MinesweeperState;
 import com.KIRA_ZINA.backend.minesweeper.service.MinesweeperSessionService;
 import com.KIRA_ZINA.backend.twentyfortyeight.domain.Game2048State;
 import com.KIRA_ZINA.backend.twentyfortyeight.service.Game2048SessionService;
+
+import static com.KIRA_ZINA.backend.common.RoomProgressResponse.PlayerProgress;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -155,15 +157,19 @@ public class GameRoomService {
     }
 
     public void registerPlayerSession(String roomId, String playerId, String sessionId) {
-        Map<String, String> sessions = roomPlayerSessions.get(roomId);
-        if (sessions == null) {
+        rooms.computeIfPresent(roomId, (id, room) -> {
+            if (!room.hasPlayer(playerId)) {
+                throw new IllegalArgumentException("Player not in room");
+            }
+            Map<String, String> sessions = roomPlayerSessions.get(roomId);
+            if (sessions != null) {
+                sessions.put(playerId, sessionId);
+            }
+            return room;
+        });
+        if (!rooms.containsKey(roomId)) {
             throw new IllegalArgumentException("Room not found: " + roomId);
         }
-        GameRoom room = rooms.get(roomId);
-        if (room == null || !room.hasPlayer(playerId)) {
-            throw new IllegalArgumentException("Player not in room");
-        }
-        sessions.put(playerId, sessionId);
     }
 
     public RoomStateResponse getRoomState(String roomId) {
@@ -217,6 +223,7 @@ public class GameRoomService {
                     metrics.put("gameOver", state.gameOver());
                     metrics.put("won", state.won());
                     metrics.put("flagsPlaced", state.flagsPlaced());
+                    metrics.put("boardsCleared", state.boardsCleared());
                 } catch (Exception e) {
                     metrics.put("error", "Session not found");
                 }
@@ -227,12 +234,76 @@ public class GameRoomService {
                     metrics.put("score", state.score());
                     metrics.put("gameOver", state.gameOver());
                     metrics.put("moved", state.moved());
+                    metrics.put("movesMade", state.movesMade());
                 } catch (Exception e) {
                     metrics.put("error", "Session not found");
                 }
             }
         }
         return metrics;
+    }
+
+    public RoomProgressResponse getRoomProgress(String roomId) {
+        GameRoom room = rooms.get(roomId);
+        if (room == null) {
+            throw new IllegalArgumentException("Room not found: " + roomId);
+        }
+
+        Map<String, String> sessions = roomPlayerSessions.getOrDefault(roomId, Collections.emptyMap());
+        List<PlayerProgress> playerProgresses = new ArrayList<>();
+
+        for (Map.Entry<String, String> entry : sessions.entrySet()) {
+            String pid = entry.getKey();
+            String sid = entry.getValue();
+            GameRoom.Player player = room.getPlayer(pid);
+            String playerName = player != null ? player.name() : pid;
+            playerProgresses.add(extractPlayerProgress(sid, room.getSettings().gameType(), pid, playerName));
+        }
+
+        return new RoomProgressResponse(
+                roomId,
+                room.getSettings().gameType().name(),
+                playerProgresses
+        );
+    }
+
+    private PlayerProgress extractPlayerProgress(String sessionId, GameType gameType, String playerId, String playerName) {
+        switch (gameType) {
+            case BLACKJACK -> {
+                try {
+                    BlackjackState state = blackjackSessionService.state(sessionId);
+                    return new PlayerProgress(playerId, playerName, 0, 0,
+                            !state.canContinue(), false, 0,
+                            state.balance(), state.phase().name(), 0, 0);
+                } catch (Exception e) {
+                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+                }
+            }
+            case MINESWEEPER -> {
+                try {
+                    MinesweeperState state = minesweeperSessionService.state(sessionId);
+                    long openedCount = state.cells().stream()
+                            .filter(c -> c.state().name().equals("OPENED"))
+                            .count();
+                    return new PlayerProgress(playerId, playerName, 0, state.boardsCleared(),
+                            state.gameOver(), state.won(), 0,
+                            0, "", (int) openedCount, state.flagsPlaced());
+                } catch (Exception e) {
+                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+                }
+            }
+            case TWENTY_FORTY_EIGHT -> {
+                try {
+                    Game2048State state = game2048SessionService.state(sessionId);
+                    return new PlayerProgress(playerId, playerName, state.score(), 0,
+                            state.gameOver(), false, state.movesMade(),
+                            0, "", 0, 0);
+                } catch (Exception e) {
+                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+                }
+            }
+        }
+        return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
     }
 
     public void setGameSession(String roomId, Object gameSession, String gameSessionId) {

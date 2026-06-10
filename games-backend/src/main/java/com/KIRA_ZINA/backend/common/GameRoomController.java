@@ -76,6 +76,11 @@ public class GameRoomController {
         return roomService.getRoomState(roomId);
     }
 
+    @GetMapping("/{roomId}/progress")
+    public RoomProgressResponse getRoomProgress(@PathVariable("roomId") String roomId) {
+        return roomService.getRoomProgress(roomId);
+    }
+
     @PostMapping("/{roomId}/sessions")
     @ResponseStatus(HttpStatus.CREATED)
     public void registerSession(@PathVariable("roomId") String roomId, @RequestBody RegisterSessionRequest request) {

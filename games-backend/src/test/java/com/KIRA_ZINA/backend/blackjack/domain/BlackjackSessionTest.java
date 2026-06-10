@@ -88,9 +88,9 @@ class BlackjackSessionTest {
             session.startRound();
             BlackjackState state = session.placeBet(10.0);
 
-            // Balance deducted
-            assertThat(state.balance()).isEqualTo(90.0);
-            assertThat(state.currentBet()).isEqualTo(10.0);
+            // Balance deducted (90 during play, or restored if settled immediately)
+            assertThat(state.balance()).isIn(90.0, 100.0, 110.0, 115.0);
+            assertThat(state.currentBet()).isIn(0.0, 10.0);
             // Player dealt 2 cards; dealer shows at least 1 (hidden until stand)
             assertThat(state.playerCards()).hasSize(2);
             assertThat(state.dealerCards()).hasSizeBetween(1, 2);
@@ -421,10 +421,207 @@ class BlackjackSessionTest {
         }
     }
 
+    // ============================================================ Notifications
+
+    @Nested
+    @DisplayName("Notifications")
+    class Notifications {
+
+        @Test
+        @DisplayName("state returns empty notifications list after first read")
+        void notificationsDrainedOnRead() {
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            BlackjackState first = session.state();
+            assertThat(first.notifications()).isEmpty();
+        }
+
+        @Test
+        @DisplayName("blackjack notification is set when player gets natural 21")
+        void playerBlackjackAddsNotification() {
+            // Arrange: player gets blackjack (Ace + 10-value), dealer no blackjack
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.ACE),   // player card 1
+                    new Card(Suit.CLUBS, Rank.KING),     // player card 2 → blackjack
+                    new Card(Suit.DIAMONDS, Rank.FIVE),  // dealer card 1
+                    new Card(Suit.SPADES, Rank.NINE)     // dealer card 2 → 14, no blackjack
+            );
+            BlackjackState state = session.placeBet(10.0);
+            assertThat(state.notifications()).anyMatch(msg -> msg.contains("Blackjack"));
+        }
+
+        @Test
+        @DisplayName("dealer blackjack adds notification when dealer peeks")
+        void dealerBlackjackAddsNotification() {
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.FIVE),    // player card 1
+                    new Card(Suit.CLUBS, Rank.NINE),      // player card 2 → 14
+                    new Card(Suit.DIAMONDS, Rank.ACE),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.KING)      // dealer card 2 → blackjack!
+            );
+            BlackjackState state = session.placeBet(10.0);
+            assertThat(state.notifications()).anyMatch(msg -> msg.contains("Dealer has Blackjack"));
+        }
+    }
+
+    // ============================================================ Bankruptcy Bailout
+
+    @Nested
+    @DisplayName("Bankruptcy Bailout")
+    class BankruptcyBailout {
+
+        @Test
+        @DisplayName("startRound with zero balance refills to 100 and skips hand")
+        void bailoutRefillsBalance() throws Exception {
+            BlackjackSession session = session(100.0);
+            java.lang.reflect.Field balanceField = BlackjackSession.class.getDeclaredField("balance");
+            balanceField.setAccessible(true);
+            balanceField.set(session, 0.0);
+
+            BlackjackState state = session.startRound();
+            assertThat(state.balance()).isEqualTo(100.0);
+            assertThat(state.phase()).isEqualTo(RoundPhase.BETTING);
+            assertThat(state.notifications()).anyMatch(msg -> msg.contains("refilled"));
+        }
+
+        @Test
+        @DisplayName("bailout is triggered only when balance is exactly zero")
+        void bailoutNotTriggeredForPositiveBalance() throws Exception {
+            BlackjackSession session = session(100.0);
+            java.lang.reflect.Field balanceField = BlackjackSession.class.getDeclaredField("balance");
+            balanceField.setAccessible(true);
+            balanceField.set(session, 0.01);
+
+            BlackjackState state = session.startRound();
+            assertThat(state.phase()).isEqualTo(RoundPhase.BETTING);
+            assertThat(state.balance()).isEqualTo(0.01);
+            assertThat(state.notifications()).isEmpty();
+        }
+    }
+
+    // ============================================================ Controlled Deck Tests
+
+    @Nested
+    @DisplayName("Controlled Deck — Dealer Peek & 5-Card Charlie")
+    class ControlledDeck {
+
+        @Test
+        @DisplayName("dealer blackjack causes immediate settlement (dealer peek)")
+        void dealerBlackjackSettlesImmediately() {
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            // Player gets 14, dealer gets Ace+King (blackjack)
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.FIVE),    // player card 1
+                    new Card(Suit.CLUBS, Rank.NINE),      // player card 2
+                    new Card(Suit.DIAMONDS, Rank.ACE),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.KING)      // dealer card 2 → blackjack
+            );
+            BlackjackState state = session.placeBet(10.0);
+            assertThat(state.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(state.winner()).isEqualTo(RoundWinner.DEALER);
+            assertThat(state.balance()).isEqualTo(90.0); // lost bet
+            assertThat(state.dealerCards()).hasSize(2);   // fully revealed
+            assertThat(state.dealerValue()).isEqualTo(21);
+        }
+
+        @Test
+        @DisplayName("both player and dealer blackjack results in tie")
+        void bothBlackjackTies() {
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            // Both get blackjack
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.ACE),     // player card 1
+                    new Card(Suit.CLUBS, Rank.KING),       // player card 2 → blackjack
+                    new Card(Suit.DIAMONDS, Rank.ACE),     // dealer card 1
+                    new Card(Suit.SPADES, Rank.KING)       // dealer card 2 → blackjack
+            );
+            BlackjackState state = session.placeBet(10.0);
+            assertThat(state.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(state.winner()).isEqualTo(RoundWinner.TIE);
+            assertThat(state.balance()).isEqualTo(100.0); // bet returned
+        }
+
+        @Test
+        @DisplayName("5-Card Charlie auto-wins when player reaches 5 cards without busting")
+        void fiveCardCharlieWins() {
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            // Player needs 5 small cards, dealer gets 2 cards that don't matter
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.TWO),     // player card 1
+                    new Card(Suit.CLUBS, Rank.THREE),     // player card 2
+                    new Card(Suit.DIAMONDS, Rank.FIVE),   // dealer card 1
+                    new Card(Suit.SPADES, Rank.NINE),     // dealer card 2
+                    new Card(Suit.HEARTS, Rank.TWO),       // player card 3 (hit)
+                    new Card(Suit.CLUBS, Rank.THREE),      // player card 4 (hit)
+                    new Card(Suit.DIAMONDS, Rank.TWO)      // player card 5 (hit) → 12, no bust → Charlie!
+            );
+            session.placeBet(10.0);
+            BlackjackState afterHit1 = session.hit(); // card 3
+            assertThat(afterHit1.phase()).isEqualTo(RoundPhase.PLAYER_TURN);
+            BlackjackState afterHit2 = session.hit(); // card 4
+            assertThat(afterHit2.phase()).isEqualTo(RoundPhase.PLAYER_TURN);
+            BlackjackState afterHit3 = session.hit(); // card 5 → Charlie!
+            assertThat(afterHit3.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(afterHit3.winner()).isEqualTo(RoundWinner.PLAYER);
+            assertThat(afterHit3.balance()).isEqualTo(110.0); // 90 + 10*2
+            assertThat(afterHit3.notifications()).anyMatch(msg -> msg.contains("Charlie"));
+        }
+
+        @Test
+        @DisplayName("hitting to 5 cards with bust does NOT trigger Charlie")
+        void fiveCardsBustNotCharlie() {
+            BlackjackSession session = session(100.0);
+            session.startRound();
+            // Player gets 4 small cards then a big card that busts on 5th
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.FIVE),     // player card 1
+                    new Card(Suit.CLUBS, Rank.FIVE),       // player card 2
+                    new Card(Suit.DIAMONDS, Rank.TWO),     // dealer card 1
+                    new Card(Suit.SPADES, Rank.THREE),     // dealer card 2
+                    new Card(Suit.HEARTS, Rank.THREE),     // player card 3 (hit)
+                    new Card(Suit.CLUBS, Rank.FOUR),       // player card 4 (hit)
+                    new Card(Suit.DIAMONDS, Rank.KING)     // player card 5 (hit) → bust!
+            );
+            session.placeBet(10.0);
+            session.hit();
+            session.hit();
+            BlackjackState afterHit3 = session.hit();
+            assertThat(afterHit3.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(afterHit3.winner()).isEqualTo(RoundWinner.DEALER); // bust → dealer wins
+        }
+    }
+
     // ============================================================ Helpers
 
     private static BlackjackSession session(double balance) {
         return new BlackjackSession("test-session", balance, DealerDifficulty.BASIC);
+    }
+
+    private static void setupDeck(BlackjackSession session, Card... topCards) {
+        try {
+            java.lang.reflect.Field deckField = BlackjackSession.class.getDeclaredField("deck");
+            deckField.setAccessible(true);
+            Deck deck = new Deck();
+            java.lang.reflect.Field cardsField = Deck.class.getDeclaredField("cards");
+            cardsField.setAccessible(true);
+            Card[] cards = (Card[]) cardsField.get(deck);
+            java.lang.reflect.Field nextIndexField = Deck.class.getDeclaredField("nextCardIndex");
+            nextIndexField.setAccessible(true);
+            for (int i = 0; i < topCards.length && i < cards.length; i++) {
+                cards[cards.length - 1 - i] = topCards[i];
+            }
+            nextIndexField.set(deck, cards.length);
+            deckField.set(session, deck);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**

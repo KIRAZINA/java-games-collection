@@ -1,15 +1,18 @@
 package com.KIRA_ZINA.backend.blackjack.domain;
 
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 public final class BlackjackSession {
     public static final double MIN_BET = 1.0;
     public static final double MAX_BET = 1000.0;
+    private static final double INITIAL_BALANCE = 100.0;
 
     private final String id;
     private final Hand playerHand = new Hand();
     private final Hand dealerHand = new Hand();
+    private final List<String> notifications = new ArrayList<>();
     private Deck deck = new Deck();
     private DealerDifficulty difficulty;
     private RoundPhase phase = RoundPhase.BETTING;
@@ -33,13 +36,22 @@ public final class BlackjackSession {
 
     public synchronized BlackjackState startRound() {
         ensureOpen();
-        if (balance < MIN_BET) {
-            throw new IllegalStateException("Insufficient balance to start a new round");
-        }
+        notifications.clear();
         playerHand.clear();
         dealerHand.clear();
         currentBet = 0;
         winner = RoundWinner.NONE;
+
+        // Bankruptcy bailout: when balance is zero, refill and skip the hand
+        if (balance == 0.0) {
+            balance = INITIAL_BALANCE;
+            phase = RoundPhase.BETTING;
+            addNotification("Balance depleted. Skipping hand... Balance refilled to $"
+                    + String.format("%.0f", INITIAL_BALANCE) + "! You can now bet again.");
+            touch();
+            return snapshot(false);
+        }
+
         phase = RoundPhase.BETTING;
         if (deck.remainingCards() < 12) {
             deck = new Deck();
@@ -58,22 +70,38 @@ public final class BlackjackSession {
         playerHand.add(deck.deal());
         dealerHand.add(deck.deal());
         dealerHand.add(deck.deal());
-        phase = RoundPhase.PLAYER_TURN;
-        if (playerHand.blackjack() || dealerHand.blackjack()) {
+
+        // Dealer Peek for Blackjack — check dealer's natural before player can act
+        if (dealerHand.blackjack()) {
+            addNotification("Dealer has Blackjack!");
             settleRound();
+        } else if (playerHand.blackjack()) {
+            addNotification("Blackjack! You win 3:2!");
+            settleRound();
+        } else {
+            phase = RoundPhase.PLAYER_TURN;
         }
+
         touch();
-        return snapshot(false);
+        return snapshot(phase == RoundPhase.ROUND_OVER);
     }
 
     public synchronized BlackjackState hit() {
         ensurePhase(RoundPhase.PLAYER_TURN);
         playerHand.add(deck.deal());
-        if (playerHand.bust()) {
+
+        // 5-Card Charlie: player reaches 5 cards without busting — auto-win
+        if (playerHand.cards().size() == 5 && !playerHand.bust()) {
+            winner = RoundWinner.PLAYER;
+            balance += currentBet * 2;
+            phase = RoundPhase.ROUND_OVER;
+            addNotification("5-Card Charlie! You win!");
+        } else if (playerHand.bust()) {
             settleRound();
         }
+
         touch();
-        return snapshot(phase == RoundPhase.ROUND_OVER);
+        return snapshot(true);
     }
 
     public synchronized BlackjackState stand() {
@@ -140,6 +168,8 @@ public final class BlackjackSession {
                 ? dealerHand.cards()
                 : List.of(dealerHand.cards().get(0));
         Integer dealerValue = revealDealerHand ? dealerHand.value() : null;
+        List<String> snapshotNotifications = List.copyOf(notifications);
+        notifications.clear();
         return new BlackjackState(
                 id,
                 phase,
@@ -152,7 +182,8 @@ public final class BlackjackSession {
                 dealerCards,
                 dealerValue,
                 deck.remainingCards(),
-                balance >= MIN_BET
+                balance >= MIN_BET,
+                snapshotNotifications
         );
     }
 
@@ -179,6 +210,10 @@ public final class BlackjackSession {
         if (phase == RoundPhase.SESSION_CLOSED) {
             throw new IllegalStateException("Session is closed");
         }
+    }
+
+    private void addNotification(String message) {
+        notifications.add(message);
     }
 
     private void touch() {

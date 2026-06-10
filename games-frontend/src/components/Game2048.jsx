@@ -136,16 +136,20 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <div className="status-strip">
           <span>Score: {state?.score ?? 0}</span>
-          <span>Moved: {state?.moved ? 'Yes' : 'No'}</span>
+          <span>Moves: {state?.movesMade ?? 0}</span>
         </div>
 
-        {opponents.map((opp) => (
-          <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
-            <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
-            <span>Score: {opp.metrics?.score ?? 0}</span>
-            <span>{opp.metrics?.gameOver ? 'Done' : 'Playing'}</span>
-          </div>
-        ))}
+        {opponents.map((opp) => {
+          const isGameOver = opp.gameOver ?? opp.metrics?.gameOver ?? false;
+          return (
+            <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
+              <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
+              <span>Score: {opp.score ?? opp.metrics?.score ?? 0}</span>
+              <span>Moves: {opp.movesMade ?? opp.metrics?.movesMade ?? 0}</span>
+              <span>{isGameOver ? 'Done' : 'Playing'}</span>
+            </div>
+          );
+        })}
       </div>
 
       <div className="board-2048" aria-label="2048 board">

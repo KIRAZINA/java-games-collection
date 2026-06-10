@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: games-backend/Dockerfile
+    restart: always
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+    # Backend port is NOT exposed to the host for security.
+    # It is accessed internally by nginx container.
+
+  frontend:
+    build:
+      context: .
+      dockerfile: games-frontend/Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always

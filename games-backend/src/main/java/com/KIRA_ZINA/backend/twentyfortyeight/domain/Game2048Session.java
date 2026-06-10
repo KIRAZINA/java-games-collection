@@ -13,6 +13,7 @@ public final class Game2048Session {
     private int score;
     private boolean gameOver;
     private boolean lastMoveChanged;
+    private int movesMade;
     private Instant lastTouched = Instant.now();
 
     public Game2048Session(String id) {
@@ -39,6 +40,7 @@ public final class Game2048Session {
 
         if (lastMoveChanged) {
             addRandomTile();
+            movesMade++;
         }
         gameOver = !hasAvailableMove();
 
@@ -53,6 +55,7 @@ public final class Game2048Session {
         score = 0;
         gameOver = false;
         lastMoveChanged = false;
+        movesMade = 0;
         addRandomTile();
         addRandomTile();
         touch();
@@ -198,7 +201,7 @@ public final class Game2048Session {
                 }
             }
         }
-        return new Game2048State(id, SIZE, score, gameOver, lastMoveChanged, tiles);
+        return new Game2048State(id, SIZE, score, gameOver, lastMoveChanged, movesMade, tiles);
     }
 
     private int index(int row, int col) {

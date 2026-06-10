@@ -1,151 +1,201 @@
 # Java Games Collection
 
-Java Games Collection is a multi-module Maven project that combines three standalone Java games into one desktop hub with a shared launcher interface.
+Web-based gaming platform featuring Blackjack, Minesweeper, and 2048 with a React frontend and Spring Boot backend.
 
-The launcher provides a single entry point for:
+## Games
 
-- `2048`
-- `Minesweeper`
-- `Blackjack`
-
-Each game is still built as its own runnable artifact, while the launcher gives the project one unified desktop experience.
+| Game | Description |
+|------|-------------|
+| **Blackjack** | Casino card game with dealer AI (Basic/Conservative/Aggressive), dealer peek, 5-Card Charlie, and bankruptcy bailout |
+| **Minesweeper** | Classic logic puzzle with first-click safety zone, flagging, BFS flood-fill, and next-board progression |
+| **2048** | Sliding tile puzzle with keyboard/button controls, score tracking, and move counting |
 
 ## Project Structure
 
-```text
+```
 java-games-collection/
-|-- 2048-game/
-|-- Minesweeper-game/
-|-- Black-Jack-game/
-|-- games-launcher/
-|-- build-games-hub-exe.bat
-|-- launch-games-hub.bat
-|-- run-launcher.bat
-`-- pom.xml
+├── games-backend/          # Spring Boot 3.3.5 REST API (Java 17)
+│   ├── src/main/java/.../backend/
+│   │   ├── blackjack/      # Blackjack domain, service, controller
+│   │   ├── minesweeper/    # Minesweeper domain, service, controller
+│   │   ├── twentyfortyeight/ # 2048 domain, service, controller
+│   │   ├── common/         # Room system, progress polling
+│   │   └── config/         # Rate limiting, CORS, exception handling
+│   └── src/test/
+├── games-frontend/         # React 18 + Vite
+│   ├── src/
+│   │   ├── components/     # Blackjack, Minesweeper, Game2048, RoomLobby, etc.
+│   │   ├── api/api.js      # Central fetch wrapper
+│   │   ├── App.jsx         # Multi-view router (no react-router)
+│   │   └── styles.css      # Animations, responsive layout
+│   └── src/test/
+├── docker-compose.yml
+├── pom.xml
+└── README.md
 ```
 
-## Modules
+## Architecture
 
-### `2048-game`
+### Multiplayer Rooms ("Parallel Races")
 
-Swing-based implementation of the classic 2048 puzzle game.
+Each player in a room has their own independent game session. Rooms aggregate progress via a lightweight polling endpoint (`GET /api/rooms/{roomId}/progress`). There is no shared table — all games run in parallel within the room context. This fits a clean server-authoritative model with REST short-polling (no WebSockets).
 
-### `Minesweeper-game`
+### Backend (games-backend)
 
-Swing-based Minesweeper with a start flow and difficulty selection.
+Pure domain layer with no framework coupling — domain classes (`BlackjackSession`, `MinesweeperSession`, `Game2048Session`) contain no Spring annotations. Services wrap domain objects with HTTP lifecycle. All storage is in-memory (`ConcurrentHashMap`).
 
-### `Black-Jack-game`
+**Key design decisions:**
+- Server-authoritative: all game logic runs on the backend; frontend sends intents only
+- No database: all state lives in memory (suitable for ephemeral game sessions)
+- Room auto-cleanup: empty rooms removed immediately; TTL-based eviction runs every 60s
+- Rate limiting: bucket4j per-IP (60 tokens, 10 refill/10s); GET requests exempt
+- Phase enforcement: Blackjack `placeBet`/`hit`/`stand` guarded by `IllegalStateException` → 409 Conflict
 
-Desktop Blackjack built with LibGDX and packaged with its required runtime dependencies.
+### Frontend (games-frontend)
 
-### `games-launcher`
+Conditional rendering via `activeView` state (no `react-router-dom`). No heavy state management — `useState` + prop drilling only. API calls go through a single `api.js` fetch wrapper.
 
-The shared desktop launcher that displays all three games in one styled home screen and starts each game from the same interface.
+**UI features:**
+- Dealer card masking (second card hidden during PLAYER_TURN, revealed on ROUND_OVER)
+- Balance flash animations (green for wins, red for losses)
+- Live countdown (5s auto-advance between rounds)
+- Notification toast (blackjack, dealer peek, bailout messages)
+- Bankruptcy banner (orange alert when balance reaches zero)
+- Live opponent polling (room progress updates every 2s)
+- Minesweeper "Next Board" button on win
 
 ## Requirements
 
-- JDK 17 or newer
+- JDK 17+
 - Maven 3.9+
-- Windows is recommended for the provided `.bat` launcher and packaging scripts
+- Node.js 18+ and npm
+- Docker and Docker Compose (optional)
 
-Optional:
+## Development
 
-- WiX Toolset in `PATH` if you want `jpackage` to build a Windows installer `.exe`
-
-## Build
-
-From the repository root:
+### Backend
 
 ```bash
-mvn clean package
+# Build
+mvn clean install
+
+# Run tests (164 tests)
+cd games-backend && mvn test
+
+# Start server
+cd games-backend && mvn spring-boot:run
 ```
 
-This builds:
+API available at `http://localhost:8080`
 
-- the three game artifacts
-- the launcher JAR
-- the shaded Blackjack desktop package
-
-## Run the Launcher
-
-### Option 1: double-click launcher script
-
-```bat
-launch-games-hub.bat
-```
-
-This is the easiest local launch option. It builds the launcher if needed and starts it with `javaw`, so no terminal window remains open.
-
-### Option 2: Maven build + manual JAR launch
+### Frontend
 
 ```bash
-mvn clean package
-java -jar games-launcher/target/games-launcher-1.0-SNAPSHOT.jar
+cd games-frontend
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-### Option 3: legacy helper script
+Frontend at `http://localhost:5173`
 
-```bat
-run-launcher.bat
+### Run All Tests
+
+```bash
+# Backend
+cd games-backend && mvn test
+
+# Frontend (44 tests)
+cd games-frontend && npm test
 ```
 
-This script rebuilds the full project and launches the hub.
+## Docker
 
-## Create a Portable Windows EXE
-
-Use:
-
-```bat
-build-games-hub-exe.bat
+```bash
+docker-compose up --build
 ```
 
-What it does:
+Access at `http://localhost:80`
 
-1. Builds the full project
-2. Creates a portable Windows app image with `jpackage`
-3. Copies all game JARs into the packaged app layout
-4. Tries to create an installer if WiX Toolset is available
+## API Overview
 
-Portable application output:
+### Game Sessions
 
-```text
-dist\Java Games Hub\Java Games Hub.exe
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/blackjack/sessions` | Create Blackjack session |
+| GET | `/api/blackjack/sessions/{id}` | Get state |
+| DELETE | `/api/blackjack/sessions/{id}` | Close session |
+| POST | `.../{id}/rounds` | Start new round |
+| POST | `.../{id}/bets` | Place bet |
+| POST | `.../{id}/hit` | Hit |
+| POST | `.../{id}/stand` | Stand |
 
-Installer output, when WiX Toolset is installed:
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/minesweeper/sessions` | Create Minesweeper session |
+| GET/POST/DELETE | as above | Open, flag, reset, next-board |
 
-```text
-dist\Java Games Hub-1.0.0.exe
-```
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/2048/sessions` | Create 2048 session |
+| GET/POST/DELETE | as above | Move, reset |
+
+### Rooms
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/rooms` | List all rooms |
+| GET | `/api/rooms?type=BLACKJACK` | List rooms by type |
+| POST | `/api/rooms` | Create room |
+| GET | `/api/rooms/{id}` | Get room details |
+| POST | `/api/rooms/{id}/join` | Join room |
+| DELETE | `/api/rooms/{id}/leave` | Leave room |
+| GET | `/api/rooms/{id}/progress` | Lightweight player progress |
+| GET | `/api/rooms/{id}/state` | Full room state |
+| POST | `/api/rooms/{id}/sessions` | Register game session |
+
+## Blackjack Rules
+
+- **Dealer Peek**: If dealer has natural 21 after deal, round settles immediately (no player action)
+- **5-Card Charlie**: Player with 5 cards without busting auto-wins (even money)
+- **Bankruptcy Bailout**: When balance reaches 0, the next `startRound` refills to $100 and skips the hand
+- **Blackjack Payout**: 3:2 (2.5× bet)
+- **Win Payout**: 2× bet
+- **Tie**: Bet returned (push)
+- **Bet Range**: $1 – $1,000
+- **Dealer Difficulty**: BASIC (hits ≤16), CONSERVATIVE (hits ≤15), AGGRESSIVE (hits ≤17)
 
 ## Testing
 
-Run all tests:
+### Backend Tests (164 tests)
+
+| Suite | Tests | Scope |
+|-------|-------|-------|
+| HandTest | 19 | value(), blackjack(), bust(), clear() |
+| BlackjackSessionTest | 40 | State machine, payouts, dealer difficulty, deck reshuffle, bankruptcy bailout, dealer peek, 5-Card Charlie, notifications |
+| BlackjackController IT | 10 | HTTP status, error handling, full lifecycle |
+| MinesweeperSessionTest | 48 | First-click safety, win/loss, flag, BFS, reset |
+| MinesweeperController IT | 8 | Create, open, flag, reset, lifecycle |
+| Game2048SessionTest | 18 | Move directions, score, game-over, reset |
+| Game2048Controller IT | 7 | Create, move, reset, lifecycle |
+| GamesBackendIntegrationTest | 32 | All three games + room lifecycle + TTL eviction |
+| GameRoomServiceTest | 7 | Create, join, leave, auto-cleanup |
+
+### Frontend Tests (44 tests)
+
+| Suite | Tests | Scope |
+|-------|-------|-------|
+| Blackjack.test.jsx | 23 | Rendering, button states, API calls, notifications, bankruptcy banner, countdown, dealer masking, exit button |
+| Minesweeper.test.jsx | 10 | Board rendering, flag count, game over, win/loss |
+| Game2048.test.jsx | 11 | Grid, score, arrow keys, move buttons, game over, reset |
+
+## Build
 
 ```bash
-mvn clean test
+# Backend JAR
+mvn clean package           # target/games-backend-1.0-SNAPSHOT.jar
+
+# Frontend bundle
+cd games-frontend && npm run build   # dist/
 ```
-
-Run launcher tests only:
-
-```bash
-mvn -pl games-launcher test
-```
-
-## Current State
-
-- The project is organized as a Maven multi-module repository
-- All three games can be launched from one shared desktop interface
-- The launcher has a styled desktop UI
-- A portable Windows `.exe` build is supported
-- Windows installer generation is supported when WiX Toolset is installed
-
-## Notes
-
-- The three games remain separate modules on purpose
-- This avoids classpath and package conflicts between the original game codebases
-- The launcher starts each game as its own runnable artifact instead of merging all classes into one classpath
-
-## Additional Docs
-
-- [WINDOWS-LAUNCHER.md](WINDOWS-LAUNCHER.md)

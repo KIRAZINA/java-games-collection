@@ -55,16 +55,16 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
     if (!roomId) return;
     const interval = setInterval(async () => {
       try {
-        const roomState = await roomsApi.getRoomState(roomId);
-        const others = (roomState.players ?? []).filter((p) => p.playerId !== playerId);
+        const progress = await roomsApi.getRoomProgress(roomId);
+        const others = (progress.players ?? []).filter((p) => p.playerId !== playerId);
         setOpponents(others);
 
         const prev = prevOpponentsRef.current;
         for (const opp of others) {
           const prevOpp = prev.find((p) => p.playerId === opp.playerId);
-          if (opp.metrics?.gameOver && (!prevOpp || !prevOpp.metrics?.gameOver)) {
-            if (opp.metrics.won) {
-              setOpponentAlert(`${opp.playerName} won!`);
+          if (opp.gameOver && (!prevOpp || !prevOpp.gameOver)) {
+            if (opp.won) {
+              setOpponentAlert(`${opp.playerName} won! (boards: ${opp.boardsCleared})`);
             } else {
               setOpponentAlert(`${opp.playerName} lost!`);
             }
@@ -78,6 +78,19 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
     }, 2000);
     return () => clearInterval(interval);
   }, [roomId, playerId]);
+
+  async function handleNextBoard() {
+    if (!state?.sessionId || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      setState(await minesweeperApi.nextBoard(state.sessionId));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const cellMap = useMemo(() => {
     const map = new Map();
@@ -158,6 +171,12 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
         <button id="ms-new-board" onClick={createSession} disabled={busy}>
           New Board
         </button>
+        {state?.won && (
+          <button id="ms-next-board" onClick={handleNextBoard} disabled={busy}
+            style={{ background: '#1b5e20', color: '#fff', borderColor: '#1b5e20' }}>
+            Next Board ({state.boardsCleared + 1})
+          </button>
+        )}
       </div>
 
       {error && <p className="error-line" role="alert">{error}</p>}
@@ -167,16 +186,22 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
           <span>Flags: {state?.flagsPlaced ?? 0}</span>
           <span>Remaining: {state?.remainingMines ?? 0}</span>
           <span>First click: {state?.firstClickDone ? 'Done' : 'Pending'}</span>
+          <span>Boards: {state?.boardsCleared ?? 0}</span>
         </div>
 
-        {opponents.map((opp) => (
-          <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
-            <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
-            <span>Opened: {opp.metrics?.clearedFields ?? 0}</span>
-            <span>{opp.metrics?.gameOver ? (opp.metrics.won ? 'Won' : 'Lost') : 'Playing'}</span>
-            <span>Flags: {opp.metrics?.flagsPlaced ?? 0}</span>
-          </div>
-        ))}
+        {opponents.map((opp) => {
+          const isGameOver = opp.gameOver ?? opp.metrics?.gameOver ?? false;
+          const isWon = opp.won ?? opp.metrics?.won ?? false;
+          return (
+            <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
+              <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
+              <span>Opened: {opp.clearedFields ?? opp.metrics?.clearedFields ?? 0}</span>
+              <span>Boards: {opp.boardsCleared ?? opp.metrics?.boardsCleared ?? 0}</span>
+              <span>{isGameOver ? (isWon ? 'Won' : 'Lost') : 'Playing'}</span>
+              <span>Flags: {opp.flagsPlaced ?? opp.metrics?.flagsPlaced ?? 0}</span>
+            </div>
+          );
+        })}
       </div>
 
       <div

@@ -367,6 +367,120 @@ select {
   grid-column: 2;
 }
 
+/* ─── Card Deal Animation ─────────────────────────────────────────────── */
+
+@keyframes slideInFade {
+  0% {
+    opacity: 0;
+    transform: translateY(-24px) scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.card-deal-in {
+  animation: slideInFade 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ─── Hidden Card Pulse ──────────────────────────────────────────────── */
+
+@keyframes subtlePulse {
+  0%, 100% {
+    opacity: 0.7;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.04);
+  }
+}
+
+.card-hidden-pulse {
+  animation: subtlePulse 1.6s ease-in-out infinite;
+}
+
+/* ─── Hidden Card Back ───────────────────────────────────────────────── */
+
+.card-back {
+  background: linear-gradient(145deg, #243e68, #1a2d4e) !important;
+  color: #ffffff !important;
+  display: grid;
+  place-items: center;
+}
+
+.card-back-pattern {
+  font-size: 1.6rem;
+  opacity: 0.35;
+  user-select: none;
+}
+
+/* ─── Balance Flash Animations ───────────────────────────────────────── */
+
+@keyframes flashGreen {
+  0% {
+    background: #e8f5e9;
+    border-color: #2e7d32;
+    box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.25);
+  }
+  100% {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes flashRed {
+  0% {
+    background: #ffebee;
+    border-color: #c62828;
+    box-shadow: 0 0 0 3px rgba(198, 40, 40, 0.25);
+  }
+  100% {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+.balance-flash-green {
+  animation: flashGreen 0.5s ease-out forwards;
+}
+
+.balance-flash-red {
+  animation: flashRed 0.5s ease-out forwards;
+}
+
+/* ─── Relocated Balance Display ──────────────────────────────────────── */
+
+.balance-display {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  border: 1px solid #d6deea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 8px 16px;
+  min-width: 160px;
+  transition: background 0.3s ease, border-color 0.3s ease;
+}
+
+.balance-display .balance-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #607088;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.balance-display .balance-amount {
+  font-size: 1.3rem;
+  font-weight: 800;
+  color: #18212f;
+  font-variant-numeric: tabular-nums;
+}
+
 @media (max-width: 760px) {
   .app-shell {
     grid-template-columns: 1fr;

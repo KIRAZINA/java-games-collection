@@ -52,6 +52,11 @@ public class MinesweeperController {
         return sessions.reset(sessionId);
     }
 
+    @PostMapping("/{sessionId}/next-board")
+    public MinesweeperState nextBoard(@PathVariable("sessionId") String sessionId) {
+        return sessions.nextBoard(sessionId);
+    }
+
     @DeleteMapping("/{sessionId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void closeSession(@PathVariable("sessionId") String sessionId) {

@@ -190,7 +190,7 @@ describe('Game2048 Component', () => {
     render(<Game2048 />);
 
     await waitFor(() => {
-      expect(screen.getByText('🚫 No moves left')).toBeInTheDocument();
+      expect(screen.getByText('No moves left')).toBeInTheDocument();
     });
 
     // Make sure typing arrow keys doesn't invoke move when gameOver is true

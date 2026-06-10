@@ -20,6 +20,7 @@ public final class MinesweeperSession {
     private boolean firstClickDone;
     private int flagsPlaced;
     private int openedCells;
+    private int boardsCleared;
     private Instant lastTouched = Instant.now();
 
     public MinesweeperSession(String id, int rows, int cols, int totalMines) {
@@ -98,6 +99,16 @@ public final class MinesweeperSession {
         return snapshot();
     }
 
+    public synchronized MinesweeperState nextBoard() {
+        if (!won) {
+            throw new IllegalStateException("Can only advance to next board after winning");
+        }
+        resetState();
+        boardsCleared++;
+        touch();
+        return snapshot();
+    }
+
     public synchronized MinesweeperState state() {
         touch();
         return snapshot();
@@ -124,6 +135,10 @@ public final class MinesweeperSession {
         firstClickDone = false;
         flagsPlaced = 0;
         openedCells = 0;
+    }
+
+    public int getBoardsCleared() {
+        return boardsCleared;
     }
 
     private void placeMines(int safeRow, int safeCol) {
@@ -278,6 +293,7 @@ public final class MinesweeperSession {
                 firstClickDone,
                 gameOver,
                 won,
+                boardsCleared,
                 cells
         );
     }
