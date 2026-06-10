@@ -5,7 +5,9 @@ import java.util.List;
 public record RoomProgressResponse(
         String roomId,
         String gameType,
-        List<PlayerProgress> players
+        List<PlayerProgress> players,
+        String roomPhase,
+        long timeRemaining
 ) {
     public record PlayerProgress(
             String playerId,
@@ -18,6 +20,7 @@ public record RoomProgressResponse(
             double balance,
             String phase,
             int clearedFields,
-            int flagsPlaced
+            int flagsPlaced,
+            boolean isLocked
     ) {}
 }

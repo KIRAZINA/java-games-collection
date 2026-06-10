@@ -100,10 +100,10 @@ describe('Minesweeper Component', () => {
     );
   });
 
-  it('shows "First click: Pending" before first click', async () => {
+  it('shows score of 0 before first click', async () => {
     render(<Minesweeper />);
     await waitFor(() =>
-      expect(screen.getByText(/First click: Pending/)).toBeInTheDocument()
+      expect(screen.getByText(/Score: 0/)).toBeInTheDocument()
     );
   });
 

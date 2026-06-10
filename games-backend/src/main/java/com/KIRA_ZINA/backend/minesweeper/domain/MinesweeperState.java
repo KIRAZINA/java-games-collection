@@ -13,6 +13,8 @@ public record MinesweeperState(
         boolean gameOver,
         boolean won,
         int boardsCleared,
-        List<MinesweeperCellView> cells
+        List<MinesweeperCellView> cells,
+        int score,
+        boolean isLocked
 ) {
 }

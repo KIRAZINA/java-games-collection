@@ -11,6 +11,12 @@ function renderMineCell(cell) {
   return '';
 }
 
+function formatTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
 export function Minesweeper({ roomId, playerId, playerName, onExit }) {
   const [state, setState] = useState(null);
   const [settings, setSettings] = useState({ rows: 9, cols: 9, mines: 10 });
@@ -18,9 +24,12 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
   const [busy, setBusy] = useState(false);
   const [opponents, setOpponents] = useState([]);
   const [opponentAlert, setOpponentAlert] = useState('');
+  const [roomPhase, setRoomPhase] = useState('LOBBY');
+  const [timeRemaining, setTimeRemaining] = useState(0);
   const sessionIdRef = useRef(null);
   const prevOpponentsRef = useRef([]);
   const registeredRef = useRef(false);
+  const prevScoreRef = useRef(0);
 
   const createSession = useCallback(async () => {
     setBusy(true);
@@ -43,7 +52,7 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
 
   useEffect(() => {
     createSession();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!state?.sessionId || !roomId || registeredRef.current) return;
@@ -53,9 +62,23 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
 
   useEffect(() => {
     if (!roomId) return;
-    const interval = setInterval(async () => {
+
+    const stateInterval = setInterval(async () => {
+      try {
+        const roomState = await roomsApi.getRoomState(roomId);
+        setRoomPhase(roomState.roomPhase);
+        if (roomState.roomPhase === 'PLAYING') {
+          setTimeRemaining(roomState.timeRemaining);
+        }
+      } catch {}
+    }, 1000);
+
+    const progressInterval = setInterval(async () => {
       try {
         const progress = await roomsApi.getRoomProgress(roomId);
+        setTimeRemaining(progress.timeRemaining);
+        if (progress.roomPhase) setRoomPhase(progress.roomPhase);
+
         const others = (progress.players ?? []).filter((p) => p.playerId !== playerId);
         setOpponents(others);
 
@@ -70,13 +93,19 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
             }
             setTimeout(() => setOpponentAlert(''), 5000);
           }
+          if (!opp.gameOver && prevOpp && opp.score > prevOpp.score && opp.score > 0) {
+            setOpponentAlert(`${opp.playerName} scored ${opp.score - (prevOpp.score || 0)} more!`);
+            setTimeout(() => setOpponentAlert(''), 3000);
+          }
         }
         prevOpponentsRef.current = others;
-      } catch {
-        // polling error — ignore
-      }
+      } catch {}
     }, 2000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(stateInterval);
+      clearInterval(progressInterval);
+    };
   }, [roomId, playerId]);
 
   async function handleNextBoard() {
@@ -101,7 +130,7 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
   }, [state]);
 
   async function cellAction(action, row, col) {
-    if (!state || busy || state.gameOver) return;
+    if (!state || busy || state.gameOver || state.isLocked) return;
     setBusy(true);
     setError('');
     try {
@@ -117,6 +146,25 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
     }
   }
 
+  const isUrgent = roomPhase === 'PLAYING' && timeRemaining <= 10 && timeRemaining > 0;
+
+  if (roomId && (roomPhase === 'LOBBY' || roomPhase === 'READY_CHECK')) {
+    return (
+      <div className="game-layout">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <GameHeader title="Minesweeper" meta="Waiting..." />
+        </div>
+        <div className="ready-check-overlay">
+          <div className="ready-check-card">
+            <h2>Waiting for players</h2>
+            <p>Other players are joining the room. The game will start shortly.</p>
+            <div className="ready-spinner"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="game-layout">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -129,6 +177,18 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
         )}
       </div>
 
+      {roomPhase === 'PLAYING' && (
+        <div className={`timer-display ${isUrgent ? 'timer-urgent' : ''}`}>
+          {formatTime(timeRemaining)}
+        </div>
+      )}
+
+      {roomPhase === 'GAME_OVER' && (
+        <div className="timer-display timer-expired">
+          Time's Up!
+        </div>
+      )}
+
       {opponentAlert && (
         <p className="error-line" role="alert" style={{ borderLeftColor: '#3466a8', background: '#e8f0fd', color: '#1d3a6f' }}>
           {opponentAlert}
@@ -138,35 +198,18 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
       <div className="toolbar">
         <label>
           Rows
-          <input
-            id="ms-rows"
-            type="number"
-            min="4"
-            max="30"
-            value={settings.rows}
-            onChange={(e) => setSettings({ ...settings, rows: e.target.value })}
-          />
+          <input id="ms-rows" type="number" min="4" max="30" value={settings.rows}
+            onChange={(e) => setSettings({ ...settings, rows: e.target.value })} />
         </label>
         <label>
           Columns
-          <input
-            id="ms-cols"
-            type="number"
-            min="4"
-            max="30"
-            value={settings.cols}
-            onChange={(e) => setSettings({ ...settings, cols: e.target.value })}
-          />
+          <input id="ms-cols" type="number" min="4" max="30" value={settings.cols}
+            onChange={(e) => setSettings({ ...settings, cols: e.target.value })} />
         </label>
         <label>
           Mines
-          <input
-            id="ms-mines"
-            type="number"
-            min="1"
-            value={settings.mines}
-            onChange={(e) => setSettings({ ...settings, mines: e.target.value })}
-          />
+          <input id="ms-mines" type="number" min="1" value={settings.mines}
+            onChange={(e) => setSettings({ ...settings, mines: e.target.value })} />
         </label>
         <button id="ms-new-board" onClick={createSession} disabled={busy}>
           New Board
@@ -185,24 +228,39 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
         <div className="status-strip">
           <span>Flags: {state?.flagsPlaced ?? 0}</span>
           <span>Remaining: {state?.remainingMines ?? 0}</span>
-          <span>First click: {state?.firstClickDone ? 'Done' : 'Pending'}</span>
+          <span>Score: {state?.score ?? 0}</span>
           <span>Boards: {state?.boardsCleared ?? 0}</span>
         </div>
 
         {opponents.map((opp) => {
-          const isGameOver = opp.gameOver ?? opp.metrics?.gameOver ?? false;
-          const isWon = opp.won ?? opp.metrics?.won ?? false;
+          const isGameOver = opp.gameOver ?? false;
+          const isWon = opp.won ?? false;
+          const isLocked = opp.isLocked ?? false;
+          const oppScore = opp.score ?? opp.clearedFields ?? 0;
+          const isOvertake = oppScore > (prevScoreRef.current > 0 && opp.playerId ? prevOpponentsRef.current.find(p => p.playerId === opp.playerId)?.score ?? 0 : 0);
+
           return (
-            <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
+            <div key={opp.playerId} className={`status-strip opponent-strip ${isOvertake ? 'score-overtake' : ''}`}
+              style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
               <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
-              <span>Opened: {opp.clearedFields ?? opp.metrics?.clearedFields ?? 0}</span>
-              <span>Boards: {opp.boardsCleared ?? opp.metrics?.boardsCleared ?? 0}</span>
-              <span>{isGameOver ? (isWon ? 'Won' : 'Lost') : 'Playing'}</span>
-              <span>Flags: {opp.flagsPlaced ?? opp.metrics?.flagsPlaced ?? 0}</span>
+              <span>Opened: {opp.clearedFields ?? 0}</span>
+              <span>Score: {opp.score ?? 0}</span>
+              <span>Boards: {opp.boardsCleared ?? 0}</span>
+              <span>{isLocked ? '💥 Locked' : isGameOver ? (isWon ? 'Won' : 'Lost') : 'Playing'}</span>
             </div>
           );
         })}
       </div>
+
+      {state?.isLocked && (
+        <div className="locked-overlay">
+          <div className="locked-banner">
+            <span className="boom-icon">💥</span>
+            <h3>BOOM! Board Locked</h3>
+            <p>Waiting for timer to expire...</p>
+          </div>
+        </div>
+      )}
 
       <div
         className="mines-grid"
@@ -212,17 +270,18 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
           const row = Math.floor(idx / (state?.cols ?? 1));
           const col = idx % (state?.cols ?? 1);
           const cell = cellMap.get(`${row}:${col}`);
+          const justRevealed = cell?.state === 'OPENED' && !cell?.mine;
           return (
             <button
               key={`${row}-${col}`}
               id={`ms-cell-${row}-${col}`}
-              className={`mine-cell ${cell?.state?.toLowerCase() ?? ''}`}
+              className={`mine-cell ${cell?.state?.toLowerCase() ?? ''} ${justRevealed ? 'tile-reveal' : ''}`}
               onClick={() => cellAction('open', row, col)}
               onContextMenu={(e) => {
                 e.preventDefault();
                 cellAction('flag', row, col);
               }}
-              disabled={busy || state?.gameOver}
+              disabled={busy || state?.gameOver || state?.isLocked}
               aria-label={`Row ${row + 1}, column ${col + 1}`}
             >
               {renderMineCell(cell)}

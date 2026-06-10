@@ -359,28 +359,35 @@ class MinesweeperSessionTest {
 
     /**
      * Opens cells systematically to win the game: iterates all cells,
-     * skipping mines, until won=true.
+     * skipping mines, until won=true. Retries with a fresh board if a
+     * mine is accidentally opened before the last safe cell triggers
+     * the win (random mine placement can cause this on small boards).
      */
     private MinesweeperState openAllSafely(MinesweeperSession session, int rows, int cols) {
-        // First click to initialize mines
-        MinesweeperState state = session.open(0, 0);
-        if (state.gameOver()) return state;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            MinesweeperState state = session.open(0, 0);
+            if (state.gameOver()) return state;
 
-        // Keep opening covered non-mine cells until win
-        boolean madeProgress = true;
-        while (!state.gameOver() && madeProgress) {
-            madeProgress = false;
-            for (int r = 0; r < rows && !state.gameOver(); r++) {
-                for (int c = 0; c < cols && !state.gameOver(); c++) {
-                    MinesweeperCellView cell = cellAt(state, r, c);
-                    if (cell.state() == MinesweeperCellState.COVERED && !cell.mine()) {
-                        state = session.open(r, c);
-                        madeProgress = true;
+            boolean madeProgress = true;
+            while (!state.gameOver() && madeProgress) {
+                madeProgress = false;
+                for (int r = 0; r < rows && !state.gameOver(); r++) {
+                    for (int c = 0; c < cols && !state.gameOver(); c++) {
+                        MinesweeperCellView cell = cellAt(state, r, c);
+                        if (cell.state() == MinesweeperCellState.COVERED && !cell.mine()) {
+                            state = session.open(r, c);
+                            madeProgress = true;
+                        }
                     }
                 }
             }
+
+            if (state.won()) return state;
+            if (state.gameOver()) {
+                session.reset();
+            }
         }
-        return state;
+        return session.state();
     }
 
     /**

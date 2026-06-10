@@ -320,6 +320,7 @@ select {
   color: #1d2633;
   font-size: clamp(1.3rem, 5vw, 2.4rem);
   font-weight: 900;
+  transition: transform 150ms ease-in-out;
 }
 
 .value-2 {
@@ -355,6 +356,15 @@ select {
   color: #ffffff;
 }
 
+.tile-ice-block {
+  background: linear-gradient(135deg, #a0b8cc, #7a94ad);
+  color: #ffffff;
+  font-size: 1.6rem;
+  border: 2px solid #b0d0e8;
+  box-shadow: inset 0 0 8px rgba(255,255,255,0.4);
+  animation: iceDrop 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
 .move-pad {
   display: grid;
   grid-template-columns: repeat(3, 90px);
@@ -365,6 +375,135 @@ select {
 .move-pad button:first-child,
 .move-pad button:last-child {
   grid-column: 2;
+}
+
+/* ─── Timer Display ────────────────────────────────────────────────── */
+
+.timer-display {
+  font-size: 2.2rem;
+  font-weight: 900;
+  text-align: center;
+  padding: 12px;
+  border-radius: 8px;
+  background: #ffffff;
+  border: 2px solid #243e68;
+  color: #243e68;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 2px;
+}
+
+.timer-urgent {
+  animation: pulseRed 1s ease-in-out infinite;
+  border-color: #d32f2f;
+  color: #d32f2f;
+}
+
+.timer-expired {
+  border-color: #d32f2f;
+  color: #d32f2f;
+  background: #ffebee;
+}
+
+/* ─── Ready Check Overlay ──────────────────────────────────────────── */
+
+.ready-check-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+  z-index: 200;
+}
+
+.ready-check-card {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 48px;
+  text-align: center;
+  max-width: 420px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.ready-check-card h2 {
+  margin: 0 0 12px;
+  font-size: 1.8rem;
+}
+
+.ready-check-card p {
+  color: #607088;
+  margin: 0 0 24px;
+}
+
+.ready-button {
+  padding: 14px 40px;
+  font-size: 1.2rem;
+  font-weight: 800;
+  background: #243e68;
+  color: #ffffff;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease;
+}
+
+.ready-button:hover {
+  background: #1a2d4e;
+  transform: scale(1.05);
+}
+
+.ready-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #dce3ec;
+  border-top-color: #243e68;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 12px auto;
+}
+
+.countdown-display {
+  font-size: 5rem;
+  font-weight: 900;
+  color: #243e68;
+  animation: countdownPop 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ─── Locked Overlay ───────────────────────────────────────────────── */
+
+.locked-overlay {
+  position: relative;
+}
+
+.locked-banner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  border-radius: 12px;
+  background: #fff3e0;
+  border: 2px solid #e65100;
+  text-align: center;
+}
+
+.locked-banner .boom-icon {
+  font-size: 3rem;
+}
+
+.locked-banner h3 {
+  margin: 0;
+  color: #bf360c;
+}
+
+.locked-banner p {
+  margin: 0;
+  color: #e65100;
+}
+
+/* ─── Opponent Score Overtake ──────────────────────────────────────── */
+
+.score-overtake span:first-child {
+  animation: scoreFlash 0.6s ease-out forwards;
 }
 
 /* ─── Card Deal Animation ─────────────────────────────────────────────── */
@@ -384,8 +523,6 @@ select {
   animation: slideInFade 0.32s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* ─── Hidden Card Pulse ──────────────────────────────────────────────── */
-
 @keyframes subtlePulse {
   0%, 100% {
     opacity: 0.7;
@@ -401,8 +538,6 @@ select {
   animation: subtlePulse 1.6s ease-in-out infinite;
 }
 
-/* ─── Hidden Card Back ───────────────────────────────────────────────── */
-
 .card-back {
   background: linear-gradient(145deg, #243e68, #1a2d4e) !important;
   color: #ffffff !important;
@@ -415,8 +550,6 @@ select {
   opacity: 0.35;
   user-select: none;
 }
-
-/* ─── Balance Flash Animations ───────────────────────────────────────── */
 
 @keyframes flashGreen {
   0% {
@@ -452,8 +585,6 @@ select {
   animation: flashRed 0.5s ease-out forwards;
 }
 
-/* ─── Relocated Balance Display ──────────────────────────────────────── */
-
 .balance-display {
   display: flex;
   align-items: baseline;
@@ -479,6 +610,88 @@ select {
   font-weight: 800;
   color: #18212f;
   font-variant-numeric: tabular-nums;
+}
+
+/* ─── Keyframe Animations ──────────────────────────────────────────── */
+
+@keyframes pulseRed {
+  0%, 100% {
+    transform: scale(1);
+    color: #d32f2f;
+    border-color: #d32f2f;
+  }
+  50% {
+    transform: scale(1.06);
+    color: #b71c1c;
+    border-color: #b71c1c;
+  }
+}
+
+@keyframes tileReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.3) rotateX(90deg);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.08) rotateX(0deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotateX(0deg);
+  }
+}
+
+.tile-reveal {
+  animation: tileReveal 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes iceDrop {
+  0% {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.5);
+    filter: brightness(2);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(4px) scale(1.05);
+  }
+  70% {
+    transform: translateY(-2px) scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: brightness(1);
+  }
+}
+
+@keyframes scoreFlash {
+  0% {
+    background: #e8f5e9;
+    border-color: #2e7d32;
+    box-shadow: 0 0 0 3px rgba(46, 125, 50, 0.3);
+  }
+  100% {
+    background: transparent;
+    border-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes countdownPop {
+  0% {
+    transform: scale(1.6);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 @media (max-width: 760px) {

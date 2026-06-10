@@ -12,12 +12,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.KIRA_ZINA.backend.blackjack.service.BlackjackSessionService;
+import com.KIRA_ZINA.backend.common.GameRoomService;
 import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import com.KIRA_ZINA.backend.blackjack.domain.BlackjackSession;
 import com.KIRA_ZINA.backend.blackjack.domain.DealerDifficulty;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -46,6 +48,9 @@ class GamesBackendIntegrationTest {
 
     @Autowired
     private BlackjackSessionService blackjackSessionService;
+
+    @Autowired
+    private GameRoomService gameRoomService;
 
     // ============================================================ Blackjack
 
@@ -468,7 +473,7 @@ class GamesBackendIntegrationTest {
                     .andExpect(jsonPath("$.roomId", notNullValue()))
                     .andExpect(jsonPath("$.roomName").value("Test Room"))
                     .andExpect(jsonPath("$.gameType").value("BLACKJACK"))
-                    .andExpect(jsonPath("$.state").value("WAITING"))
+                    .andExpect(jsonPath("$.phase").value("LOBBY"))
                     .andExpect(jsonPath("$.playerCount").value(1));
         }
 
@@ -627,6 +632,230 @@ class GamesBackendIntegrationTest {
 
             mockMvc.perform(get("/api/rooms/{roomId}", roomId))
                     .andExpect(status().isBadRequest());
+        }
+    }
+
+    // ============================================================ Multi-Player Integration
+
+    @Nested
+    @DisplayName("Multi-Player Integration")
+    class MultiPlayerIntegration {
+
+        @Test
+        @DisplayName("Room lifecycle: create (multiplayer) → join (max capacity) → leave → cleanup")
+        void multiplayerRoomCreationAndJoining() throws Exception {
+            // Player 1 creates a Minesweeper room (multiplayer, max 2 players, 120s time limit)
+            MvcResult created = mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName": "Multiplayer Minesweeper",
+                                        "gameType": "MINESWEEPER",
+                                        "ownerId": "multi-owner",
+                                        "ownerName": "Alice",
+                                        "settings": {
+                                            "gameType": "MINESWEEPER",
+                                            "settings": {"rows": 9, "cols": 9, "mines": 10},
+                                            "passwordProtected": false,
+                                            "passwordHash": "",
+                                            "allowBots": false,
+                                            "maxPlayers": 2,
+                                            "timeLimitSeconds": 120,
+                                            "isSinglePlayer": false
+                                        }
+                                    }"""))
+                    .andExpect(status().isCreated())
+                    .andExpect(jsonPath("$.roomId", notNullValue()))
+                    .andExpect(jsonPath("$.playerCount").value(1))
+                    .andExpect(jsonPath("$.phase").value("LOBBY"))
+                    .andReturn();
+            String roomId = roomSessionId(created);
+
+            // Player 2 joins
+            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "multi-joiner",
+                                        "playerName": "Bob"
+                                    }"""))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(2));
+
+            // GET room confirms both players
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(2));
+
+            // Player 3 tries to join (room full) → 409 CONFLICT
+            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "multi-rejected",
+                                        "playerName": "Charlie"
+                                    }"""))
+                    .andExpect(status().isConflict());
+
+            // Player 2 leaves
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "multi-joiner"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            // GET room shows 1 player remaining
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(1));
+
+            // Owner leaves → room removed
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "multi-owner"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            // Room is gone
+            mockMvc.perform(get("/api/rooms/{roomId}", roomId))
+                    .andExpect(status().isBadRequest());
+        }
+
+        @Test
+        @DisplayName("Two players share a Minesweeper room; one makes a move, progress reflects both")
+        void multiplayerMinesweeperInteraction() throws Exception {
+            // Player 1 creates a Minesweeper session
+            MvcResult session1Created = mockMvc.perform(post("/api/minesweeper/sessions")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"rows\":9,\"cols\":9,\"mines\":10}"))
+                    .andExpect(status().isCreated())
+                    .andReturn();
+            String sessionId1 = sessionId(session1Created);
+
+            // Player 1 creates a multiplayer Minesweeper room
+            MvcResult roomCreated = mockMvc.perform(post("/api/rooms")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "roomName": "MS Interaction",
+                                        "gameType": "MINESWEEPER",
+                                        "ownerId": "interact-owner",
+                                        "ownerName": "Alice",
+                                        "settings": {
+                                            "gameType": "MINESWEEPER",
+                                            "settings": {"rows": 9, "cols": 9, "mines": 10},
+                                            "passwordProtected": false,
+                                            "passwordHash": "",
+                                            "allowBots": false,
+                                            "maxPlayers": 2,
+                                            "timeLimitSeconds": 120,
+                                            "isSinglePlayer": false
+                                        }
+                                    }"""))
+                    .andExpect(status().isCreated())
+                    .andReturn();
+            String roomId = roomSessionId(roomCreated);
+
+            // Player 1 registers session with room
+            mockMvc.perform(post("/api/rooms/{roomId}/sessions", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "interact-owner",
+                                        "sessionId": "%s"
+                                    }""".formatted(sessionId1)))
+                    .andExpect(status().isCreated());
+
+            // Player 2 joins
+            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "interact-joiner",
+                                        "playerName": "Bob"
+                                    }"""))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.playerCount").value(2));
+
+            // Player 2 creates and registers their session
+            MvcResult session2Created = mockMvc.perform(post("/api/minesweeper/sessions")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"rows\":9,\"cols\":9,\"mines\":10}"))
+                    .andExpect(status().isCreated())
+                    .andReturn();
+            String sessionId2 = sessionId(session2Created);
+
+            mockMvc.perform(post("/api/rooms/{roomId}/sessions", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "interact-joiner",
+                                        "sessionId": "%s"
+                                    }""".formatted(sessionId2)))
+                    .andExpect(status().isCreated());
+
+            // Both players now have registered sessions — progress shows 2 entries
+            mockMvc.perform(get("/api/rooms/{roomId}/progress", roomId))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.roomPhase").value("LOBBY"))
+                    .andExpect(jsonPath("$.players", hasSize(2)));
+
+            // Player 1 opens a cell
+            mockMvc.perform(post("/api/minesweeper/sessions/{id}/open", sessionId1)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"row\":4,\"col\":4}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.firstClickDone").value(true));
+
+            // Cleanup: leave players in reverse order, delete sessions
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "interact-joiner"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                        "playerId": "interact-owner"
+                                    }"""))
+                    .andExpect(status().isNoContent());
+
+            mockMvc.perform(delete("/api/minesweeper/sessions/{id}", sessionId1))
+                    .andExpect(status().isNoContent());
+
+            mockMvc.perform(delete("/api/minesweeper/sessions/{id}", sessionId2))
+                    .andExpect(status().isNoContent());
+        }
+
+        @AfterEach
+        void cleanupGameRoomServiceState() throws Exception {
+            // Use reflection to clear the internal maps of GameRoomService.
+            // This prevents leftover state from polluting other tests.
+            Field roomsField = GameRoomService.class.getDeclaredField("rooms");
+            roomsField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, ?> rooms = (Map<String, ?>) roomsField.get(gameRoomService);
+            rooms.clear();
+
+            Field playerToRoomField = GameRoomService.class.getDeclaredField("playerToRoom");
+            playerToRoomField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, ?> playerToRoom = (Map<String, ?>) playerToRoomField.get(gameRoomService);
+            playerToRoom.clear();
+
+            Field roomPlayerSessionsField = GameRoomService.class.getDeclaredField("roomPlayerSessions");
+            roomPlayerSessionsField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, ?> roomPlayerSessions = (Map<String, ?>) roomPlayerSessionsField.get(gameRoomService);
+            roomPlayerSessions.clear();
         }
     }
 

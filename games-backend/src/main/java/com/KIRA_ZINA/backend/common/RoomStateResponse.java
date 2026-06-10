@@ -8,7 +8,13 @@ public record RoomStateResponse(
         String gameType,
         String state,
         int playerCount,
-        List<PlayerState> players
+        List<PlayerState> players,
+        String roomPhase,
+        long timeRemaining,
+        long gameStartTime,
+        boolean allPlayersReady,
+        int readyCount,
+        int totalPlayers
 ) {
     public record PlayerState(
             String playerId,

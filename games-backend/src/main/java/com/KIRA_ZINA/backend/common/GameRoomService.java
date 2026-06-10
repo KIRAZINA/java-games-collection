@@ -1,9 +1,11 @@
 package com.KIRA_ZINA.backend.common;
 
 import com.KIRA_ZINA.backend.blackjack.domain.BlackjackState;
+import com.KIRA_ZINA.backend.blackjack.domain.DealerDifficulty;
 import com.KIRA_ZINA.backend.blackjack.service.BlackjackSessionService;
 import com.KIRA_ZINA.backend.minesweeper.domain.MinesweeperState;
 import com.KIRA_ZINA.backend.minesweeper.service.MinesweeperSessionService;
+import com.KIRA_ZINA.backend.twentyfortyeight.domain.Game2048Session;
 import com.KIRA_ZINA.backend.twentyfortyeight.domain.Game2048State;
 import com.KIRA_ZINA.backend.twentyfortyeight.service.Game2048SessionService;
 
@@ -22,6 +24,7 @@ import java.util.stream.Collectors;
 public class GameRoomService {
     private static final Duration ROOM_TTL = Duration.ofHours(2);
     private static final Duration EMPTY_ROOM_TTL = Duration.ofMinutes(5);
+    private static final long READY_CHECK_DURATION_MS = 3000;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -42,25 +45,68 @@ public class GameRoomService {
     }
 
     public GameRoom.RoomSummary createRoom(String roomName, GameSettings settings, String ownerId, String ownerName) {
+        if (playerToRoom.containsKey(ownerId)) {
+            leaveRoom(ownerId);
+        }
         String roomId = UUID.randomUUID().toString();
         String passwordHash = null;
         if (settings.passwordProtected() && settings.passwordHash() != null && !settings.passwordHash().isEmpty()) {
             passwordHash = passwordEncoder.encode(settings.passwordHash());
         }
+        int maxPlayers = settings.isSinglePlayer() ? 1 : settings.maxPlayers();
         GameSettings securedSettings = new GameSettings(
                 settings.gameType(),
                 settings.settings(),
                 settings.passwordProtected(),
                 passwordHash,
                 settings.allowBots(),
-                settings.maxPlayers()
+                maxPlayers,
+                settings.isSinglePlayer() ? 0 : settings.timeLimitSeconds(),
+                settings.isSinglePlayer()
         );
         GameRoom room = new GameRoom(roomId, roomName, securedSettings, ownerId);
         room.addPlayer(ownerId, ownerName, false);
         rooms.put(roomId, room);
         playerToRoom.put(ownerId, roomId);
         roomPlayerSessions.put(roomId, new ConcurrentHashMap<>());
+
+        if (securedSettings.isSinglePlayer()) {
+            room.markReady(ownerId);
+            room.startGame();
+            String sessionId = initSessionForPlayer(room, ownerId, securedSettings);
+            if (sessionId != null) {
+                roomPlayerSessions.get(roomId).put(ownerId, sessionId);
+            }
+        }
+
         return GameRoom.RoomSummary.from(room);
+    }
+
+    private String initSessionForPlayer(GameRoom room, String playerId, GameSettings settings) {
+        try {
+            return switch (settings.gameType()) {
+                case BLACKJACK -> {
+                    double balance = ((Number) settings.settings().getOrDefault("initialBalance", 100.0)).doubleValue();
+                    String difficultyStr = (String) settings.settings().getOrDefault("difficulty", "BASIC");
+                    DealerDifficulty difficulty = DealerDifficulty.valueOf(difficultyStr);
+                    BlackjackState state = blackjackSessionService.createSession(balance, difficulty);
+                    yield state.sessionId();
+                }
+                case MINESWEEPER -> {
+                    int rows = ((Number) settings.settings().getOrDefault("rows", 9)).intValue();
+                    int cols = ((Number) settings.settings().getOrDefault("cols", 9)).intValue();
+                    int mines = ((Number) settings.settings().getOrDefault("mines", 10)).intValue();
+                    MinesweeperState state = minesweeperSessionService.createSession(rows, cols, mines);
+                    yield state.sessionId();
+                }
+                case TWENTY_FORTY_EIGHT -> {
+                    Game2048State state = game2048SessionService.createSession();
+                    yield state.sessionId();
+                }
+            };
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     public List<GameRoom.RoomSummary> listRooms(GameType gameType) {
@@ -83,100 +129,103 @@ public class GameRoomService {
     }
 
     public GameRoom.RoomSummary joinRoom(String roomId, String playerId, String playerName, String password) {
+        if (playerToRoom.containsKey(playerId)) {
+            leaveRoom(playerId);
+        }
         GameRoom room = rooms.get(roomId);
-        if (room == null) {
-            throw new IllegalArgumentException("Room not found: " + roomId);
-        }
+        if (room == null) throw new IllegalArgumentException("Room not found: " + roomId);
 
-        if (room.getState() != GameRoom.RoomState.WAITING) {
-            throw new IllegalStateException("Room is not accepting players (state: " + room.getState() + ")");
-        }
+        synchronized (room) {
+            if (!rooms.containsKey(roomId)) throw new IllegalArgumentException("Room not found: " + roomId);
 
-        if (room.isFull()) {
-            throw new IllegalStateException("Room is full");
-        }
-
-        if (room.getSettings().passwordProtected()) {
-            String storedHash = room.getSettings().passwordHash();
-            if (storedHash == null || password == null || !passwordEncoder.matches(password, storedHash)) {
-                throw new SecurityException("Invalid password");
+            if (room.getPhase() != GameRoom.RoomPhase.LOBBY && room.getPhase() != GameRoom.RoomPhase.READY_CHECK) {
+                throw new IllegalStateException("Room is not accepting players (phase: " + room.getPhase() + ")");
             }
-        }
+            if (room.isFull()) throw new IllegalStateException("Room is full");
 
-        boolean added = room.addPlayer(playerId, playerName, false);
-        if (!added) {
-            throw new IllegalStateException("Failed to join room");
-        }
+            if (room.getSettings().passwordProtected()) {
+                String storedHash = room.getSettings().passwordHash();
+                if (storedHash == null || password == null || !passwordEncoder.matches(password, storedHash)) {
+                    throw new SecurityException("Invalid password");
+                }
+            }
 
-        playerToRoom.put(playerId, roomId);
-        return GameRoom.RoomSummary.from(room);
+            boolean added = room.addPlayer(playerId, playerName, false);
+            if (!added) throw new IllegalStateException("Failed to join room");
+
+            playerToRoom.put(playerId, roomId);
+            return GameRoom.RoomSummary.from(room);
+        }
     }
 
     public GameRoom.RoomSummary joinAsSpectator(String roomId, String spectatorId, String spectatorName) {
         GameRoom room = rooms.get(roomId);
-        if (room == null) {
-            throw new IllegalArgumentException("Room not found: " + roomId);
-        }
-
+        if (room == null) throw new IllegalArgumentException("Room not found: " + roomId);
         room.addSpectator(spectatorId, spectatorName);
         return GameRoom.RoomSummary.from(room);
     }
 
     public boolean leaveRoom(String playerId) {
         String roomId = playerToRoom.remove(playerId);
-        if (roomId == null) {
-            return false;
-        }
+        if (roomId == null) return false;
 
         GameRoom room = rooms.get(roomId);
-        if (room == null) {
+        if (room == null) return false;
+
+        synchronized (room) {
+            room.removePlayer(playerId);
+            Map<String, String> sessions = roomPlayerSessions.get(roomId);
+            if (sessions != null) sessions.remove(playerId);
+
+            if (room.getPlayers().isEmpty()) {
+                rooms.remove(roomId);
+                roomPlayerSessions.remove(roomId);
+                return true;
+            }
             return false;
         }
-
-        room.removePlayer(playerId);
-        Map<String, String> sessions = roomPlayerSessions.get(roomId);
-        if (sessions != null) {
-            sessions.remove(playerId);
-        }
-
-        if (room.getPlayers().isEmpty()) {
-            rooms.remove(roomId);
-            roomPlayerSessions.remove(roomId);
-            return true;
-        }
-        return false;
     }
 
     public boolean leaveAsSpectator(String roomId, String spectatorId) {
         GameRoom room = rooms.get(roomId);
-        if (room == null) {
-            return false;
-        }
+        if (room == null) return false;
         room.removeSpectator(spectatorId);
         return true;
     }
 
     public void registerPlayerSession(String roomId, String playerId, String sessionId) {
         rooms.computeIfPresent(roomId, (id, room) -> {
-            if (!room.hasPlayer(playerId)) {
-                throw new IllegalArgumentException("Player not in room");
-            }
+            if (!room.hasPlayer(playerId)) throw new IllegalArgumentException("Player not in room");
             Map<String, String> sessions = roomPlayerSessions.get(roomId);
-            if (sessions != null) {
-                sessions.put(playerId, sessionId);
-            }
+            if (sessions != null) sessions.put(playerId, sessionId);
             return room;
         });
-        if (!rooms.containsKey(roomId)) {
-            throw new IllegalArgumentException("Room not found: " + roomId);
+        if (!rooms.containsKey(roomId)) throw new IllegalArgumentException("Room not found: " + roomId);
+    }
+
+    public synchronized void markPlayerReady(String roomId, String playerId) {
+        GameRoom room = rooms.get(roomId);
+        if (room == null) throw new IllegalArgumentException("Room not found: " + roomId);
+        if (room.getPhase() != GameRoom.RoomPhase.LOBBY) {
+            throw new IllegalStateException("Room is not in LOBBY phase");
+        }
+        if (!room.hasPlayer(playerId)) throw new IllegalArgumentException("Player not in room");
+
+        room.markReady(playerId);
+        if (room.allPlayersReady()) {
+            if (room.getSettings().gameType() == GameType.BLACKJACK) {
+                room.startGame();
+            } else {
+                room.startReadyCheck();
+            }
         }
     }
 
     public RoomStateResponse getRoomState(String roomId) {
         GameRoom room = rooms.get(roomId);
-        if (room == null) {
-            throw new IllegalArgumentException("Room not found: " + roomId);
-        }
+        if (room == null) throw new IllegalArgumentException("Room not found: " + roomId);
+
+        tickRoomPhase(room);
 
         Map<String, String> sessions = roomPlayerSessions.getOrDefault(roomId, Collections.emptyMap());
         List<RoomStateResponse.PlayerState> playerStates = new ArrayList<>();
@@ -190,13 +239,141 @@ public class GameRoomService {
             playerStates.add(new RoomStateResponse.PlayerState(pid, playerName, metrics));
         }
 
+        long timeRemaining = calculateTimeRemaining(room);
+
         return new RoomStateResponse(
                 roomId,
                 room.getSettings().gameType().name(),
-                room.getState().name(),
+                room.getPhase().name(),
                 room.getPlayerCount(),
-                playerStates
+                playerStates,
+                room.getPhase().name(),
+                timeRemaining,
+                room.getGameStartTime(),
+                room.allPlayersReady(),
+                room.getReadyPlayers().size(),
+                room.getPlayerCount()
         );
+    }
+
+    public RoomProgressResponse getRoomProgress(String roomId) {
+        GameRoom room = rooms.get(roomId);
+        if (room == null) throw new IllegalArgumentException("Room not found: " + roomId);
+
+        tickRoomPhase(room);
+
+        Map<String, String> sessions = roomPlayerSessions.getOrDefault(roomId, Collections.emptyMap());
+        List<PlayerProgress> playerProgresses = new ArrayList<>();
+
+        for (Map.Entry<String, String> entry : sessions.entrySet()) {
+            String pid = entry.getKey();
+            String sid = entry.getValue();
+            GameRoom.Player player = room.getPlayer(pid);
+            String playerName = player != null ? player.name() : pid;
+            playerProgresses.add(extractPlayerProgress(sid, room.getSettings().gameType(), pid, playerName));
+        }
+
+        long timeRemaining = calculateTimeRemaining(room);
+
+        return new RoomProgressResponse(
+                roomId,
+                room.getSettings().gameType().name(),
+                playerProgresses,
+                room.getPhase().name(),
+                timeRemaining
+        );
+    }
+
+    private void tickRoomPhase(GameRoom room) {
+        if (room.getSettings().gameType() == GameType.BLACKJACK) return;
+
+        long now = System.currentTimeMillis();
+
+        if (room.getPhase() == GameRoom.RoomPhase.READY_CHECK) {
+            if (now - room.getReadyCheckStartTime() >= READY_CHECK_DURATION_MS) {
+                room.startGame();
+                injectIceBlocksOnStart(room);
+            }
+        }
+
+        if (room.getPhase() == GameRoom.RoomPhase.PLAYING) {
+            int timeLimit = room.getSettings().timeLimitSeconds();
+            if (timeLimit > 0) {
+                long elapsed = (now - room.getGameStartTime()) / 1000;
+                if (elapsed >= timeLimit) {
+                    settleGame(room);
+                }
+            }
+        }
+    }
+
+    private void injectIceBlocksOnStart(GameRoom room) {
+        if (room.getSettings().gameType() != GameType.TWENTY_FORTY_EIGHT) return;
+        Map<String, String> sessions = roomPlayerSessions.getOrDefault(room.getRoomId(), Collections.emptyMap());
+        for (Map.Entry<String, String> entry : sessions.entrySet()) {
+            try {
+                Game2048State state = game2048SessionService.state(entry.getValue());
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private long calculateTimeRemaining(GameRoom room) {
+        if (room.getSettings().gameType() == GameType.BLACKJACK) {
+            return -1;
+        }
+        if (room.getPhase() == GameRoom.RoomPhase.READY_CHECK) {
+            long elapsed = System.currentTimeMillis() - room.getReadyCheckStartTime();
+            return Math.max(0, (READY_CHECK_DURATION_MS - elapsed) / 1000);
+        }
+        if (room.getPhase() == GameRoom.RoomPhase.PLAYING) {
+            int timeLimit = room.getSettings().timeLimitSeconds();
+            if (timeLimit <= 0) return -1;
+            long elapsed = (System.currentTimeMillis() - room.getGameStartTime()) / 1000;
+            return Math.max(0, timeLimit - elapsed);
+        }
+        return -1;
+    }
+
+    private void settleGame(GameRoom room) {
+        Map<String, String> sessions = roomPlayerSessions.getOrDefault(room.getRoomId(), Collections.emptyMap());
+
+        String bestPlayerId = null;
+        int bestScore = -1;
+
+        for (Map.Entry<String, String> entry : sessions.entrySet()) {
+            String pid = entry.getKey();
+            String sid = entry.getValue();
+            try {
+                int score = extractScore(sid, room.getSettings().gameType());
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestPlayerId = pid;
+                }
+            } catch (Exception ignored) {}
+        }
+
+        if (bestPlayerId == null && !sessions.isEmpty()) {
+            bestPlayerId = sessions.keySet().iterator().next();
+        }
+
+        room.finishGame(bestPlayerId, bestScore);
+    }
+
+    private int extractScore(String sessionId, GameType gameType) {
+        return switch (gameType) {
+            case MINESWEEPER -> {
+                MinesweeperState state = minesweeperSessionService.state(sessionId);
+                yield state.score();
+            }
+            case TWENTY_FORTY_EIGHT -> {
+                Game2048State state = game2048SessionService.state(sessionId);
+                yield state.score();
+            }
+            case BLACKJACK -> {
+                BlackjackState state = blackjackSessionService.state(sessionId);
+                yield (int) state.balance();
+            }
+        };
     }
 
     private Map<String, Object> extractMetrics(String sessionId, GameType gameType) {
@@ -224,6 +401,8 @@ public class GameRoomService {
                     metrics.put("won", state.won());
                     metrics.put("flagsPlaced", state.flagsPlaced());
                     metrics.put("boardsCleared", state.boardsCleared());
+                    metrics.put("score", state.score());
+                    metrics.put("isLocked", state.isLocked());
                 } catch (Exception e) {
                     metrics.put("error", "Session not found");
                 }
@@ -235,36 +414,13 @@ public class GameRoomService {
                     metrics.put("gameOver", state.gameOver());
                     metrics.put("moved", state.moved());
                     metrics.put("movesMade", state.movesMade());
+                    metrics.put("iceBlockCount", state.iceBlockCount());
                 } catch (Exception e) {
                     metrics.put("error", "Session not found");
                 }
             }
         }
         return metrics;
-    }
-
-    public RoomProgressResponse getRoomProgress(String roomId) {
-        GameRoom room = rooms.get(roomId);
-        if (room == null) {
-            throw new IllegalArgumentException("Room not found: " + roomId);
-        }
-
-        Map<String, String> sessions = roomPlayerSessions.getOrDefault(roomId, Collections.emptyMap());
-        List<PlayerProgress> playerProgresses = new ArrayList<>();
-
-        for (Map.Entry<String, String> entry : sessions.entrySet()) {
-            String pid = entry.getKey();
-            String sid = entry.getValue();
-            GameRoom.Player player = room.getPlayer(pid);
-            String playerName = player != null ? player.name() : pid;
-            playerProgresses.add(extractPlayerProgress(sid, room.getSettings().gameType(), pid, playerName));
-        }
-
-        return new RoomProgressResponse(
-                roomId,
-                room.getSettings().gameType().name(),
-                playerProgresses
-        );
     }
 
     private PlayerProgress extractPlayerProgress(String sessionId, GameType gameType, String playerId, String playerName) {
@@ -274,9 +430,9 @@ public class GameRoomService {
                     BlackjackState state = blackjackSessionService.state(sessionId);
                     return new PlayerProgress(playerId, playerName, 0, 0,
                             !state.canContinue(), false, 0,
-                            state.balance(), state.phase().name(), 0, 0);
+                            state.balance(), state.phase().name(), 0, 0, false);
                 } catch (Exception e) {
-                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0, false);
                 }
             }
             case MINESWEEPER -> {
@@ -285,11 +441,11 @@ public class GameRoomService {
                     long openedCount = state.cells().stream()
                             .filter(c -> c.state().name().equals("OPENED"))
                             .count();
-                    return new PlayerProgress(playerId, playerName, 0, state.boardsCleared(),
+                    return new PlayerProgress(playerId, playerName, state.score(), state.boardsCleared(),
                             state.gameOver(), state.won(), 0,
-                            0, "", (int) openedCount, state.flagsPlaced());
+                            0, "", (int) openedCount, state.flagsPlaced(), state.isLocked());
                 } catch (Exception e) {
-                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0, false);
                 }
             }
             case TWENTY_FORTY_EIGHT -> {
@@ -297,20 +453,18 @@ public class GameRoomService {
                     Game2048State state = game2048SessionService.state(sessionId);
                     return new PlayerProgress(playerId, playerName, state.score(), 0,
                             state.gameOver(), false, state.movesMade(),
-                            0, "", 0, 0);
+                            0, "", 0, 0, false);
                 } catch (Exception e) {
-                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+                    return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0, false);
                 }
             }
         }
-        return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0);
+        return new PlayerProgress(playerId, playerName, 0, 0, true, false, 0, 0, "", 0, 0, false);
     }
 
     public void setGameSession(String roomId, Object gameSession, String gameSessionId) {
         GameRoom room = rooms.get(roomId);
-        if (room != null) {
-            room.setGameSession(gameSession, gameSessionId);
-        }
+        if (room != null) room.setGameSession(gameSession, gameSessionId);
     }
 
     public Object getGameSession(String roomId) {
@@ -337,15 +491,37 @@ public class GameRoomService {
     @Scheduled(fixedDelay = 60000)
     public void cleanupInactiveRooms() {
         Instant now = Instant.now();
-        rooms.entrySet().removeIf(entry -> {
-            GameRoom room = entry.getValue();
-            Duration inactiveDuration = Duration.between(room.getLastActivity(), now);
+        List<String> toRemove = new ArrayList<>();
 
-            if (room.getPlayerCount() == 0 && room.getSpectatorCount() == 0) {
-                return inactiveDuration.compareTo(EMPTY_ROOM_TTL) > 0;
+        for (Map.Entry<String, GameRoom> entry : rooms.entrySet()) {
+            GameRoom room = entry.getValue();
+            synchronized (room) {
+                Duration inactiveDuration = Duration.between(room.getLastActivity(), now);
+                boolean isEmpty = room.getPlayerCount() == 0 && room.getSpectatorCount() == 0;
+                if (isEmpty && inactiveDuration.compareTo(EMPTY_ROOM_TTL) > 0) {
+                    toRemove.add(entry.getKey());
+                } else if (!isEmpty && inactiveDuration.compareTo(ROOM_TTL) > 0) {
+                    toRemove.add(entry.getKey());
+                }
             }
-            return inactiveDuration.compareTo(ROOM_TTL) > 0;
-        });
+        }
+
+        for (String roomId : toRemove) {
+            GameRoom room = rooms.get(roomId);
+            if (room != null) {
+                synchronized (room) {
+                    Duration inactiveDuration = Duration.between(room.getLastActivity(), now);
+                    boolean isEmpty = room.getPlayerCount() == 0 && room.getSpectatorCount() == 0;
+                    if (isEmpty && inactiveDuration.compareTo(EMPTY_ROOM_TTL) > 0) {
+                        rooms.remove(roomId);
+                        roomPlayerSessions.remove(roomId);
+                    } else if (!isEmpty && inactiveDuration.compareTo(ROOM_TTL) > 0) {
+                        rooms.remove(roomId);
+                        roomPlayerSessions.remove(roomId);
+                    }
+                }
+            }
+        }
 
         Set<String> validRoomIds = rooms.keySet();
         playerToRoom.entrySet().removeIf(entry -> !validRoomIds.contains(entry.getValue()));
@@ -354,19 +530,13 @@ public class GameRoomService {
 
     public void finishRoom(String roomId) {
         GameRoom room = rooms.get(roomId);
-        if (room != null) {
-            room.setFinished();
-        }
+        if (room != null) settleGame(room);
     }
 
     public void deleteRoom(String roomId, String requesterId) {
         GameRoom room = rooms.get(roomId);
-        if (room == null) {
-            throw new IllegalArgumentException("Room not found");
-        }
-        if (!room.isOwner(requesterId)) {
-            throw new SecurityException("Only room owner can delete the room");
-        }
+        if (room == null) throw new IllegalArgumentException("Room not found");
+        if (!room.isOwner(requesterId)) throw new SecurityException("Only room owner can delete the room");
 
         room.getPlayers().forEach(p -> playerToRoom.remove(p.id()));
         room.getSpectators().forEach(p -> playerToRoom.remove(p.id()));

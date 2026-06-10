@@ -87,6 +87,12 @@ public class GameRoomController {
         roomService.registerPlayerSession(roomId, request.playerId(), request.sessionId());
     }
 
+    @PostMapping("/{roomId}/ready")
+    @ResponseStatus(HttpStatus.OK)
+    public void markReady(@PathVariable("roomId") String roomId, @RequestBody MarkReadyRequest request) {
+        roomService.markPlayerReady(roomId, request.playerId());
+    }
+
     public record CreateRoomRequest(
             String roomName,
             GameType gameType,
@@ -117,5 +123,9 @@ public class GameRoomController {
     public record RegisterSessionRequest(
             String playerId,
             String sessionId
+    ) {}
+
+    public record MarkReadyRequest(
+            String playerId
     ) {}
 }

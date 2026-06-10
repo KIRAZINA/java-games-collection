@@ -9,6 +9,7 @@ public record Game2048State(
         boolean gameOver,
         boolean moved,
         int movesMade,
-        List<Game2048Tile> tiles
+        List<Game2048Tile> tiles,
+        int iceBlockCount
 ) {
 }

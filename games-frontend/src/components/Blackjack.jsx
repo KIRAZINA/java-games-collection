@@ -57,6 +57,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opponents, setOpponents] = useState([]);
+  const [roomPhase, setRoomPhase] = useState('LOBBY');
   const [countdown, setCountdown] = useState(null);
   const [balanceFlash, setBalanceFlash] = useState('');
   const registeredRef = useRef(false);
@@ -92,16 +93,29 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
 
   useEffect(() => {
     if (!roomId) return;
-    const interval = setInterval(async () => {
+
+    const stateInterval = setInterval(async () => {
+      try {
+        const roomState = await roomsApi.getRoomState(roomId);
+        setRoomPhase(roomState.roomPhase);
+      } catch {}
+    }, 1000);
+
+    const progressInterval = setInterval(async () => {
       try {
         const progress = await roomsApi.getRoomProgress(roomId);
+        if (progress.roomPhase) setRoomPhase(progress.roomPhase);
         const others = (progress.players ?? []).filter((p) => p.playerId !== playerId);
         setOpponents(others);
       } catch {
         // polling error — ignore
       }
     }, 2000);
-    return () => clearInterval(interval);
+
+    return () => {
+      clearInterval(stateInterval);
+      clearInterval(progressInterval);
+    };
   }, [roomId, playerId]);
 
   // ─── Balance Flash Animation ──────────────────────────────────────────
@@ -173,6 +187,23 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
     }
     run(() => blackjackApi.startRound(sessionId));
   }, [sessionId, run]);
+
+  if (roomId && (roomPhase === 'LOBBY' || roomPhase === 'READY_CHECK')) {
+    return (
+      <div className="game-layout">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <GameHeader title="Blackjack" meta="Waiting..." />
+        </div>
+        <div className="ready-check-overlay">
+          <div className="ready-check-card">
+            <h2>Waiting for players</h2>
+            <p>Other players are joining the room. The game will start shortly.</p>
+            <div className="ready-spinner"></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="game-layout">

@@ -1,17 +1,5 @@
-/**
- * Central API client module.
- * All functions return parsed JSON or null (for 204 No Content).
- * Throws Error with the server's message on non-2xx responses.
- */
-
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
-/**
- * Core fetch wrapper with consistent error handling.
- * @param {string} path - URL path (e.g. '/api/blackjack/sessions')
- * @param {RequestInit} options - fetch options
- * @returns {Promise<any|null>}
- */
 export async function api(path, options = {}) {
   let response;
   try {
@@ -31,17 +19,13 @@ export async function api(path, options = {}) {
     try {
       const error = await response.json();
       message = error.message ?? message;
-    } catch {
-      // Keep the status-based message when the body is empty or non-JSON.
-    }
+    } catch {}
     throw new Error(message);
   }
 
   if (response.status === 204) return null;
   return response.json();
 }
-
-// ─── Blackjack ────────────────────────────────────────────────────────────────
 
 export const blackjackApi = {
   createSession: (initialBalance, difficulty) =>
@@ -64,8 +48,6 @@ export const blackjackApi = {
   closeSession: (sessionId) =>
     api(`/api/blackjack/sessions/${sessionId}`, { method: 'DELETE' }),
 };
-
-// ─── Minesweeper ──────────────────────────────────────────────────────────────
 
 export const minesweeperApi = {
   createSession: (rows, cols, mines) =>
@@ -92,8 +74,6 @@ export const minesweeperApi = {
       api(`/api/minesweeper/sessions/${sessionId}`, { method: 'DELETE' }),
 };
 
-// ─── 2048 ─────────────────────────────────────────────────────────────────────
-
 export const game2048Api = {
   createSession: () => api('/api/2048/sessions', { method: 'POST' }),
   getState: (sessionId) => api(`/api/2048/sessions/${sessionId}`),
@@ -107,8 +87,6 @@ export const game2048Api = {
   closeSession: (sessionId) =>
     api(`/api/2048/sessions/${sessionId}`, { method: 'DELETE' }),
 };
-
-// ─── Rooms ─────────────────────────────────────────────────────────────────────
 
 export const roomsApi = {
   listRooms: (gameType) => api(`/api/rooms?type=${gameType}`),
@@ -142,4 +120,9 @@ export const roomsApi = {
       body: JSON.stringify({ playerId, sessionId }),
     }),
   getRoomsForPlayer: (playerId) => api(`/api/rooms/player/${playerId}`),
+  markReady: (roomId, playerId) =>
+    api(`/api/rooms/${roomId}/ready`, {
+      method: 'POST',
+      body: JSON.stringify({ playerId }),
+    }),
 };

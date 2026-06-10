@@ -46,7 +46,7 @@ class GameRoomServiceTest {
 
             assertThat(summary.roomName()).isEqualTo("Test Room");
             assertThat(summary.gameType()).isEqualTo(GameType.BLACKJACK);
-            assertThat(summary.state()).isEqualTo(GameRoom.RoomState.WAITING);
+            assertThat(summary.phase()).isEqualTo(GameRoom.RoomPhase.LOBBY);
             assertThat(summary.playerCount()).isEqualTo(1);
             assertThat(summary.ownerName()).isEqualTo("Alice");
             assertThat(summary.maxPlayers()).isEqualTo(4);

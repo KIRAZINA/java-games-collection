@@ -21,6 +21,7 @@ public final class MinesweeperSession {
     private int flagsPlaced;
     private int openedCells;
     private int boardsCleared;
+    private boolean isLocked;
     private Instant lastTouched = Instant.now();
 
     public MinesweeperSession(String id, int rows, int cols, int totalMines) {
@@ -41,7 +42,7 @@ public final class MinesweeperSession {
     }
 
     public synchronized MinesweeperState open(int row, int col) {
-        if (gameOver || !isValid(row, col)) {
+        if (gameOver || isLocked || !isValid(row, col)) {
             touch();
             return snapshot();
         }
@@ -59,6 +60,7 @@ public final class MinesweeperSession {
 
         if (mines.get(index)) {
             states[index] = MinesweeperCellState.OPENED;
+            isLocked = true;
             lose();
         } else {
             revealFrom(index);
@@ -70,7 +72,7 @@ public final class MinesweeperSession {
     }
 
     public synchronized MinesweeperState toggleFlag(int row, int col) {
-        if (gameOver || !isValid(row, col)) {
+        if (gameOver || isLocked || !isValid(row, col)) {
             touch();
             return snapshot();
         }
@@ -124,6 +126,14 @@ public final class MinesweeperSession {
         return lastTouched;
     }
 
+    public boolean isLocked() {
+        return isLocked;
+    }
+
+    public int getScore() {
+        return openedCells;
+    }
+
     private void resetState() {
         mines.clear();
         for (int i = 0; i < adjacentMineCounts.length; i++) {
@@ -135,6 +145,7 @@ public final class MinesweeperSession {
         firstClickDone = false;
         flagsPlaced = 0;
         openedCells = 0;
+        isLocked = false;
     }
 
     public int getBoardsCleared() {
@@ -193,9 +204,7 @@ public final class MinesweeperSession {
         int count = 0;
         for (int dr = -1; dr <= 1; dr++) {
             for (int dc = -1; dc <= 1; dc++) {
-                if (dr == 0 && dc == 0) {
-                    continue;
-                }
+                if (dr == 0 && dc == 0) continue;
                 int neighborRow = row + dr;
                 int neighborCol = col + dc;
                 if (isValid(neighborRow, neighborCol) && mines.get(index(neighborRow, neighborCol))) {
@@ -219,17 +228,13 @@ public final class MinesweeperSession {
             states[current] = MinesweeperCellState.OPENED;
             openedCells++;
 
-            if (adjacentMineCounts[current] != 0) {
-                continue;
-            }
+            if (adjacentMineCounts[current] != 0) continue;
 
             int row = current / cols;
             int col = current % cols;
             for (int dr = -1; dr <= 1; dr++) {
                 for (int dc = -1; dc <= 1; dc++) {
-                    if (dr == 0 && dc == 0) {
-                        continue;
-                    }
+                    if (dr == 0 && dc == 0) continue;
                     int neighborRow = row + dr;
                     int neighborCol = col + dc;
                     if (isValid(neighborRow, neighborCol)) {
@@ -256,9 +261,7 @@ public final class MinesweeperSession {
     }
 
     private void checkWin() {
-        if (openedCells != rows * cols - totalMines) {
-            return;
-        }
+        if (openedCells != rows * cols - totalMines) return;
         gameOver = true;
         won = true;
         flagsPlaced = totalMines;
@@ -294,7 +297,9 @@ public final class MinesweeperSession {
                 gameOver,
                 won,
                 boardsCleared,
-                cells
+                cells,
+                openedCells,
+                isLocked
         );
     }
 
