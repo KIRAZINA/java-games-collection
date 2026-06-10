@@ -1,0 +1,212 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { GameHeader } from './Blackjack.jsx';
+import { minesweeperApi, roomsApi } from '../api/api.js';
+
+function renderMineCell(cell) {
+  if (!cell) return '';
+  if (cell.state === 'FLAGGED') return '🚩';
+  if (cell.state === 'WRONG_FLAG') return '❌';
+  if (cell.mine) return '💣';
+  if (cell.state === 'OPENED' && cell.adjacentMines > 0) return cell.adjacentMines;
+  return '';
+}
+
+export function Minesweeper({ roomId, playerId, playerName, onExit }) {
+  const [state, setState] = useState(null);
+  const [settings, setSettings] = useState({ rows: 9, cols: 9, mines: 10 });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [opponents, setOpponents] = useState([]);
+  const [opponentAlert, setOpponentAlert] = useState('');
+  const sessionIdRef = useRef(null);
+  const prevOpponentsRef = useRef([]);
+  const registeredRef = useRef(false);
+
+  const createSession = useCallback(async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const data = await minesweeperApi.createSession(
+        Number(settings.rows),
+        Number(settings.cols),
+        Number(settings.mines)
+      );
+      sessionIdRef.current = data.sessionId;
+      registeredRef.current = false;
+      setState(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }, [settings]);
+
+  useEffect(() => {
+    createSession();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!state?.sessionId || !roomId || registeredRef.current) return;
+    registeredRef.current = true;
+    roomsApi.registerSession(roomId, playerId, state.sessionId).catch(() => {});
+  }, [state, roomId, playerId]);
+
+  useEffect(() => {
+    if (!roomId) return;
+    const interval = setInterval(async () => {
+      try {
+        const roomState = await roomsApi.getRoomState(roomId);
+        const others = (roomState.players ?? []).filter((p) => p.playerId !== playerId);
+        setOpponents(others);
+
+        const prev = prevOpponentsRef.current;
+        for (const opp of others) {
+          const prevOpp = prev.find((p) => p.playerId === opp.playerId);
+          if (opp.metrics?.gameOver && (!prevOpp || !prevOpp.metrics?.gameOver)) {
+            if (opp.metrics.won) {
+              setOpponentAlert(`${opp.playerName} won!`);
+            } else {
+              setOpponentAlert(`${opp.playerName} lost!`);
+            }
+            setTimeout(() => setOpponentAlert(''), 5000);
+          }
+        }
+        prevOpponentsRef.current = others;
+      } catch {
+        // polling error — ignore
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [roomId, playerId]);
+
+  const cellMap = useMemo(() => {
+    const map = new Map();
+    for (const cell of state?.cells ?? []) {
+      map.set(`${cell.row}:${cell.col}`, cell);
+    }
+    return map;
+  }, [state]);
+
+  async function cellAction(action, row, col) {
+    if (!state || busy || state.gameOver) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (action === 'open') {
+        setState(await minesweeperApi.open(state.sessionId, row, col));
+      } else {
+        setState(await minesweeperApi.toggleFlag(state.sessionId, row, col));
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="game-layout">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <GameHeader
+          title="Minesweeper"
+          meta={state?.gameOver ? (state.won ? 'Won' : 'Lost') : 'In progress'}
+        />
+        {onExit && (
+          <button onClick={onExit} style={{ minHeight: 36, padding: '0 12px' }}>Exit Room</button>
+        )}
+      </div>
+
+      {opponentAlert && (
+        <p className="error-line" role="alert" style={{ borderLeftColor: '#3466a8', background: '#e8f0fd', color: '#1d3a6f' }}>
+          {opponentAlert}
+        </p>
+      )}
+
+      <div className="toolbar">
+        <label>
+          Rows
+          <input
+            id="ms-rows"
+            type="number"
+            min="4"
+            max="30"
+            value={settings.rows}
+            onChange={(e) => setSettings({ ...settings, rows: e.target.value })}
+          />
+        </label>
+        <label>
+          Columns
+          <input
+            id="ms-cols"
+            type="number"
+            min="4"
+            max="30"
+            value={settings.cols}
+            onChange={(e) => setSettings({ ...settings, cols: e.target.value })}
+          />
+        </label>
+        <label>
+          Mines
+          <input
+            id="ms-mines"
+            type="number"
+            min="1"
+            value={settings.mines}
+            onChange={(e) => setSettings({ ...settings, mines: e.target.value })}
+          />
+        </label>
+        <button id="ms-new-board" onClick={createSession} disabled={busy}>
+          New Board
+        </button>
+      </div>
+
+      {error && <p className="error-line" role="alert">{error}</p>}
+
+      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+        <div className="status-strip">
+          <span>Flags: {state?.flagsPlaced ?? 0}</span>
+          <span>Remaining: {state?.remainingMines ?? 0}</span>
+          <span>First click: {state?.firstClickDone ? 'Done' : 'Pending'}</span>
+        </div>
+
+        {opponents.map((opp) => (
+          <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
+            <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
+            <span>Opened: {opp.metrics?.clearedFields ?? 0}</span>
+            <span>{opp.metrics?.gameOver ? (opp.metrics.won ? 'Won' : 'Lost') : 'Playing'}</span>
+            <span>Flags: {opp.metrics?.flagsPlaced ?? 0}</span>
+          </div>
+        ))}
+      </div>
+
+      <div
+        className="mines-grid"
+        style={{ '--rows': state?.rows ?? 9, '--cols': state?.cols ?? 9 }}
+      >
+        {Array.from({ length: (state?.rows ?? 0) * (state?.cols ?? 0) }, (_, idx) => {
+          const row = Math.floor(idx / (state?.cols ?? 1));
+          const col = idx % (state?.cols ?? 1);
+          const cell = cellMap.get(`${row}:${col}`);
+          return (
+            <button
+              key={`${row}-${col}`}
+              id={`ms-cell-${row}-${col}`}
+              className={`mine-cell ${cell?.state?.toLowerCase() ?? ''}`}
+              onClick={() => cellAction('open', row, col)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                cellAction('flag', row, col);
+              }}
+              disabled={busy || state?.gameOver}
+              aria-label={`Row ${row + 1}, column ${col + 1}`}
+            >
+              {renderMineCell(cell)}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export default Minesweeper;

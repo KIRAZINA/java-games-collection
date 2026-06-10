@@ -137,7 +137,7 @@ public class GameRoomService {
             sessions.remove(playerId);
         }
 
-        if (room.getPlayerCount() == 0) {
+        if (room.getPlayers().isEmpty()) {
             rooms.remove(roomId);
             roomPlayerSessions.remove(roomId);
             return true;

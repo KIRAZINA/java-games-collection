@@ -1,0 +1,411 @@
+:root {
+  color-scheme: light;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #f6f8fb;
+  color: #18212f;
+  font-synthesis: none;
+  line-height: 1.5;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  min-height: 40px;
+  border: 1px solid #c9d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #18212f;
+  cursor: pointer;
+  padding: 0 14px;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+button:hover:not(:disabled) {
+  border-color: #3466a8;
+  background: #f3f7fd;
+}
+
+button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  color: #8995a5;
+  cursor: not-allowed;
+  background: #f2f4f7;
+}
+
+input,
+select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #c9d4e2;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #18212f;
+  padding: 0 10px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+}
+
+.game-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 28px 22px;
+  border-right: 1px solid #dce3ec;
+  background: #ffffff;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #607088;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.game-nav h1 {
+  margin: 0;
+  font-size: 1.9rem;
+  line-height: 1.05;
+}
+
+.nav-buttons {
+  display: grid;
+  gap: 10px;
+}
+
+.nav-buttons button {
+  justify-content: flex-start;
+  text-align: left;
+  font-weight: 700;
+}
+
+.nav-buttons button.active {
+  color: #ffffff;
+  border-color: #243e68;
+  background: #243e68;
+}
+
+.game-stage {
+  min-width: 0;
+  padding: 28px;
+}
+
+.game-layout {
+  display: grid;
+  gap: 18px;
+  max-width: 1120px;
+}
+
+.compact-game {
+  max-width: 720px;
+}
+
+.game-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #dce3ec;
+}
+
+.game-header h2 {
+  margin: 0;
+  font-size: 1.6rem;
+  line-height: 1.15;
+}
+
+.game-header span {
+  min-width: 112px;
+  border-radius: 999px;
+  background: #e8f0dd;
+  color: #314b1d;
+  font-size: 0.86rem;
+  font-weight: 700;
+  padding: 6px 12px;
+  text-align: center;
+}
+
+.toolbar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, max-content));
+  align-items: end;
+  gap: 10px;
+}
+
+.toolbar label {
+  display: grid;
+  gap: 5px;
+  min-width: 132px;
+  color: #526174;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.actions {
+  padding-top: 4px;
+}
+
+.error-line {
+  margin: 0;
+  border-left: 4px solid #b42318;
+  background: #fff1f0;
+  color: #842019;
+  padding: 10px 12px;
+}
+
+.status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-strip span {
+  border: 1px solid #d6deea;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #3b4b60;
+  font-weight: 700;
+  padding: 7px 10px;
+}
+
+.blackjack-table {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.hand-panel {
+  border: 1px solid #d6deea;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 14px;
+}
+
+.hand-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.hand-title h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.hand-title span {
+  color: #246456;
+  font-weight: 800;
+}
+
+.cards-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 118px;
+}
+
+.playing-card {
+  width: 82px;
+  height: 112px;
+  display: grid;
+  align-content: space-between;
+  border: 1px solid #cad3df;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #ffffff, #f7f2e8);
+  padding: 10px;
+  box-shadow: 0 8px 18px rgba(25, 35, 50, 0.08);
+}
+
+.playing-card strong {
+  font-size: 0.85rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.playing-card span {
+  color: #6b2632;
+  font-size: 0.74rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.playing-card.empty {
+  align-content: center;
+  color: #667386;
+  background: #f8fafc;
+}
+
+.mines-grid {
+  --cell-size: min(42px, calc((100vw - 340px) / var(--cols)));
+  display: grid;
+  grid-template-columns: repeat(var(--cols), var(--cell-size));
+  grid-template-rows: repeat(var(--rows), var(--cell-size));
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid #b8c4d4;
+  background: #b8c4d4;
+  gap: 1px;
+}
+
+.mine-cell {
+  width: var(--cell-size);
+  min-width: var(--cell-size);
+  height: var(--cell-size);
+  min-height: var(--cell-size);
+  border: 0;
+  border-radius: 0;
+  background: #e9edf2;
+  color: #1d3150;
+  font-weight: 800;
+  padding: 0;
+}
+
+.mine-cell.covered,
+.mine-cell.flagged {
+  background: #9db2c9;
+}
+
+.mine-cell.opened {
+  background: #f8fafc;
+}
+
+.mine-cell.wrong_flag {
+  background: #f4b4a8;
+}
+
+.board-2048 {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(62px, 1fr));
+  gap: 10px;
+  width: min(100%, 430px);
+  aspect-ratio: 1;
+  border-radius: 8px;
+  background: #aab5c2;
+  padding: 10px;
+}
+
+.tile-2048 {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  border-radius: 6px;
+  background: #e6ebf1;
+  color: #1d2633;
+  font-size: clamp(1.3rem, 5vw, 2.4rem);
+  font-weight: 900;
+}
+
+.value-2 {
+  background: #f8f1df;
+}
+
+.value-4 {
+  background: #e9f2d7;
+}
+
+.value-8 {
+  background: #f5c189;
+  color: #ffffff;
+}
+
+.value-16,
+.value-32,
+.value-64 {
+  background: #d9795f;
+  color: #ffffff;
+}
+
+.value-128,
+.value-256,
+.value-512 {
+  background: #4c8f88;
+  color: #ffffff;
+}
+
+.value-1024,
+.value-2048 {
+  background: #243e68;
+  color: #ffffff;
+}
+
+.move-pad {
+  display: grid;
+  grid-template-columns: repeat(3, 90px);
+  gap: 8px;
+  width: max-content;
+}
+
+.move-pad button:first-child,
+.move-pad button:last-child {
+  grid-column: 2;
+}
+
+@media (max-width: 760px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .game-nav {
+    border-right: 0;
+    border-bottom: 1px solid #dce3ec;
+  }
+
+  .nav-buttons {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .nav-buttons button {
+    justify-content: center;
+    text-align: center;
+    padding-inline: 8px;
+  }
+
+  .game-stage {
+    padding: 18px;
+  }
+
+  .game-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .blackjack-table {
+    grid-template-columns: 1fr;
+  }
+
+  .mines-grid {
+    --cell-size: min(38px, calc((100vw - 38px) / var(--cols)));
+  }
+
+  .move-pad {
+    grid-template-columns: repeat(3, minmax(72px, 1fr));
+    width: min(100%, 320px);
+  }
+}
