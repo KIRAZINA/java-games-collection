@@ -117,6 +117,10 @@ docker-compose up --build
 
 Access at `http://localhost:80`
 
+## In-Memory State (Deployment Note)
+
+This is an in-memory demo application. All active games, rooms, and player balances are stored in `ConcurrentHashMap` and will be reset whenever the service restarts or goes to sleep after 15 minutes of inactivity (Render Free Tier behavior). No database is used.
+
 ## API Overview
 
 ### Game Sessions

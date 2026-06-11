@@ -1,31 +1,31 @@
-# Stage 1: Build the backend application
-FROM maven:3.9.6-eclipse-temurin-21-alpine AS build
+# Stage 1: Build the backend with Maven
+FROM maven:3.9.5-eclipse-temurin-17 AS build
 WORKDIR /workspace
 
-# Copy root POM and games-backend module
+# Copy root POM first for dependency caching
 COPY pom.xml .
 COPY games-backend/pom.xml games-backend/
-COPY games-backend/src games-backend/src
+RUN mvn -f games-backend/pom.xml dependency:go-offline -q || true
 
-# Package the application skipping tests
+# Copy source and build
+COPY games-backend/src games-backend/src
 RUN mvn -f games-backend/pom.xml clean package -DskipTests
 
-# Stage 2: Minimal JRE runtime
-FROM eclipse-temurin:21-jre-alpine
+# Stage 2: Minimal runtime
+FROM eclipse-temurin:17-jdk-jammy
 WORKDIR /app
 
-# Create non-root system user and group
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Create non-root user
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
-# Copy packaged JAR from build stage
+# Copy fat JAR from build stage
 COPY --from=build /workspace/games-backend/target/games-backend-1.0-SNAPSHOT.jar app.jar
-
-# Assign ownership to appuser
 RUN chown appuser:appgroup app.jar
 
-# Run as non-root user
 USER appuser
 
 EXPOSE 8080
 
-ENTRYPOINT ["java", "-jar", "app.jar"]
+# JAVA_OPTS injected by Render (e.g. -Xmx512m -Xms256m); PORT is read from
+# application.properties which uses ${PORT:8080}
+ENTRYPOINT java $JAVA_OPTS -jar app.jar

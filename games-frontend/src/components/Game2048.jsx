@@ -35,6 +35,7 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
   const registeredRef = useRef(false);
   const prevOpponentsRef = useRef([]);
   const prevScoreRef = useRef(0);
+  const moveRef = useRef(null);
 
   const createSession = useCallback(async () => {
     setBusy(true);
@@ -122,6 +123,8 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
     [busy, state]
   );
 
+  moveRef.current = move;
+
   useEffect(() => {
     function handleKeyDown(e) {
       const direction = {
@@ -132,12 +135,12 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
       }[e.key];
       if (direction) {
         e.preventDefault();
-        move(direction);
+        moveRef.current(direction);
       }
     }
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [move]);
+  }, []);
 
   const values = Array.from({ length: 16 }, () => 0);
   let lastIceBlockCount = 0;

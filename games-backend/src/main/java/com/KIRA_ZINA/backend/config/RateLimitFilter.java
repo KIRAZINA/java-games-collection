@@ -21,9 +21,9 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final Map<String, Bucket> cache = new ConcurrentHashMap<>();
 
     private Bucket createNewBucket() {
-        // Capacity of 60, refilling 10 tokens every 10 seconds
-        Refill refill = Refill.intervally(10, Duration.ofSeconds(10));
-        Bandwidth limit = Bandwidth.classic(60, refill);
+        // Sustains ~180 POST actions/minute per IP — GET requests are exempt below
+        Refill refill = Refill.intervally(30, Duration.ofSeconds(10));
+        Bandwidth limit = Bandwidth.classic(200, refill);
         return Bucket.builder()
                 .addLimit(limit)
                 .build();
