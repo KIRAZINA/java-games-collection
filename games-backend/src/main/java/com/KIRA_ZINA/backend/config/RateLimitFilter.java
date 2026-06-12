@@ -7,21 +7,25 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
+    @Value("${games.cors.allowed-origins:http://localhost:5173,http://localhost}")
+    private String[] allowedOrigins;
+
     private final Map<String, Bucket> cache = new ConcurrentHashMap<>();
 
     private Bucket createNewBucket() {
-        // Sustains ~180 POST actions/minute per IP — GET requests are exempt below
         Refill refill = Refill.intervally(30, Duration.ofSeconds(10));
         Bandwidth limit = Bandwidth.classic(200, refill);
         return Bucket.builder()
@@ -33,23 +37,28 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        // CRITICAL CORS FIX: Instantly allow pre-flight OPTIONS requests
-        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
-            response.setHeader("Access-Control-Allow-Origin", request.getHeader("Origin"));
-            response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+        // 1. DYNAMIC CORS VALIDATION: Apply headers immediately based on injected properties
+        String origin = request.getHeader("Origin");
+        if (origin != null && allowedOrigins != null && Arrays.asList(allowedOrigins).contains(origin)) {
+            response.setHeader("Access-Control-Allow-Origin", origin);
+            response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
             response.setHeader("Access-Control-Allow-Headers", "*");
             response.setHeader("Access-Control-Allow-Credentials", "true");
+        }
+
+        // 2. CRITICAL PRE-FLIGHT SHORT-CIRCUIT: Instantly return 200 OK for OPTIONS
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             response.setStatus(HttpServletResponse.SC_OK);
             return;
         }
 
-        // Exempt GET requests from rate limiting (read-only polling)
+        // 3. Exempt GET requests from rate limiting (read-only polling)
         if ("GET".equalsIgnoreCase(request.getMethod())) {
             filterChain.doFilter(request, response);
             return;
         }
 
-        // Get client IP address
+        // 4. Rate limiting via Bucket4j
         String ip = request.getHeader("X-Forwarded-For");
         if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
             ip = request.getRemoteAddr();
