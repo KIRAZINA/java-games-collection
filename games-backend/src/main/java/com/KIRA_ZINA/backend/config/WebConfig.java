@@ -1,24 +1,11 @@
 package com.KIRA_ZINA.backend.config;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
-
-    @Value("${games.cors.allowed-origins:http://localhost:5173}")
-    private String[] allowedOrigins;
-
-    @Override
-    public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/**")
-                .allowedOrigins(allowedOrigins)
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")
-                .allowedHeaders("*")
-                .exposedHeaders("Authorization")
-                .allowCredentials(true)
-                .maxAge(3600);
-    }
+    // All CORS logic is handled by RateLimitFilter at the servlet filter level.
+    // CORS is intentionally removed from Spring MVC to prevent duplicate header
+    // injection, which causes browsers to reject otherwise valid 200 OK responses.
 }
