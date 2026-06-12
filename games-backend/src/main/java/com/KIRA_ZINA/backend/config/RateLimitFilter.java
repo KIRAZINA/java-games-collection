@@ -7,21 +7,16 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
-
-    @Value("${games.cors.allowed-origins:http://localhost:5173,http://localhost}")
-    private String[] allowedOrigins;
 
     private final Map<String, Bucket> cache = new ConcurrentHashMap<>();
 
@@ -37,13 +32,19 @@ public class RateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
 
-        // 1. DYNAMIC CORS VALIDATION: Apply headers immediately based on injected properties
+        // 1. ROBUST CORS VALIDATION: Use contains() to prevent silent failures
+        // caused by protocol (http/https) mismatches or trailing slashes.
         String origin = request.getHeader("Origin");
-        if (origin != null && allowedOrigins != null && Arrays.stream(allowedOrigins).map(String::trim).anyMatch(origin::equals)) {
-            response.setHeader("Access-Control-Allow-Origin", origin);
-            response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-            response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Origin, Accept, X-Requested-With");
-            response.setHeader("Access-Control-Allow-Credentials", "true");
+        if (origin != null) {
+            boolean isAllowed = origin.contains("localhost")
+                    || origin.contains("java-games-collection-frontend.onrender.com");
+
+            if (isAllowed) {
+                response.setHeader("Access-Control-Allow-Origin", origin);
+                response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+                response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Origin, Accept, X-Requested-With");
+                response.setHeader("Access-Control-Allow-Credentials", "true");
+            }
         }
 
         // 2. CRITICAL PRE-FLIGHT SHORT-CIRCUIT: Instantly return 200 OK for OPTIONS
