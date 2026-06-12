@@ -39,10 +39,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         // 1. DYNAMIC CORS VALIDATION: Apply headers immediately based on injected properties
         String origin = request.getHeader("Origin");
-        if (origin != null && allowedOrigins != null && Arrays.asList(allowedOrigins).contains(origin)) {
+        if (origin != null && allowedOrigins != null && Arrays.stream(allowedOrigins).map(String::trim).anyMatch(origin::equals)) {
             response.setHeader("Access-Control-Allow-Origin", origin);
             response.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
-            response.setHeader("Access-Control-Allow-Headers", "*");
+            response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, Origin, Accept, X-Requested-With");
             response.setHeader("Access-Control-Allow-Credentials", "true");
         }
 
