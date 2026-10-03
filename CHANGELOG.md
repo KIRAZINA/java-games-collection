@@ -1112,3 +1112,139 @@ Task 3 converted tests in place (no splits required): count unchanged.
 - `games-backend/src/test/java/com/KIRA_ZINA/backend/minesweeper/domain/MinesweeperSessionTest.java`
   (Task 3: forceOpenMine/BitSet fixture + 4 asserted-branch conversions)
 - `CHANGELOG.md` (this section)
+
+## STEP 6a - two queue fixes + e2e multiplayer soak harness
+
+### Part A - FIX A1: deterministic `openAllSafely` (view-blind flake queued from 5b)
+
+The cell view hides mine status during play (`MinesweeperCellView.mine` =
+`revealMines && mines.get(index)` with `revealMines = gameOver`), so the helper's
+`!cell.mine()` selection was always true for covered cells and could walk into a
+mine, which forced a 50-attempt reset-retry loop - intermittent instant-win
+branches and non-assertable control flow. Rewritten to:
+
+- select safe targets from the session's private `mines` `BitSet` via the
+  existing `minesOf(session)` reflection helper (same sanctioned pattern as
+  `forceOpenMine` from 5b);
+- **determinism guard**: capture the target indices after the first click and
+  assert each is non-mine (`assertThat(mines.get(index)).isFalse()`) before the
+  opening loop runs;
+- guard that the first click on the safe zone never *loses*
+  (`gameOver && !won` must be false - an instant win is legal);
+- one deterministic pass, **retry/reset loop removed entirely**;
+- no if-guarded assertions added; the caller's claims
+  (`won`, `gameOver`, `flagsPlaced == totalMines`) remain unconditional.
+
+### Part A - FIX A2: RateLimitFilter static-vs-instance drift (choice **b**)
+
+Chose **option (b)**: keep `MAX_CACHE_ENTRIES` / `BUCKET_IDLE_MS` as documented
+**DEFAULTS** (Javadoc on both constants stating they are defaults only and the
+effective values are the property-overridable instance fields) plus a new test
+`RateLimitFilterPropertiesTest.instanceFieldsMatchStaticDefaultsWithEmptyEnvironment`
+asserting that with an empty `Environment` the instance fields equal the static
+constants. Rationale: option (a) would rewrite the reflective reads in
+`IdempotencyAndHardeningTest` for zero behavioral gain - the statics are only a
+harm if mistaken for live config, and Javadoc + the pinning test removes exactly
+that risk while keeping every existing reflective contract intact.
+
+### Part A - acceptance evidence
+
+- 3x full suite: `Tests run: 249, Failures: 0, Errors: 0, Skipped: 0` +
+  `BUILD SUCCESS` on all three runs
+  (raw: `%TEMP%\step6a\backend-6a-run-1.txt`, `-2`, `-3`).
+- Grep classification: `grep -nE "if\s*\(.*\)\s*\{"` on `MinesweeperSessionTest`
+  = 8 hits, **zero vacuous assertion-in-body hits**:
+  - 3 selection/search guards with no assertion in the body
+    (`:219` safe-flag search, `:398` safe-target capture, `:425` mine search);
+  - 1 loop subset filter (`:198 if (cell.mine())`) whose body asserts for all
+    60 mines on every executed loss;
+  - 4 `if/else` fixture-outcome branches (`:174`, `:190`, `:225`, `:291`):
+    exhaustive if/else, primary claims execute on the common branch (or
+    unconditionally before the `if`, e.g. `:290`), so no execution path exits
+    with zero assertions; the `null` (instant-win) branches are defensive
+    fallbacks, not the tests' claims.
+
+### Test count arithmetic - 6a
+
+248 (end of 5b) + 1 (`instanceFieldsMatchStaticDefaultsWithEmptyEnvironment`) =
+**249**. No other tests added or split; frontend untouched (87 unchanged, no
+frontend run required).
+
+### Part A - commits
+
+- `2b0d3a0` - the two curator-approved retroactive-approval wording edits at the
+  residual Part A sites (applied verbatim as dictated; no other 5a text touched).
+- `6667e0f` - FIX A1 + FIX A2 (3 files, +48/-25).
+
+### Part B - `scripts/e2e/` harness (no production code, no new dependencies)
+
+Five new files, each committed immediately after creation (untracked-file
+snapshot rule): `start_server.sh` (`5218255`), `player.sh` (`dc86916`,
+fix `7c9e516`), `run_soak.sh` (`7c9e516`, `bced51d`), harness-bug fixes
+(`bbc24b7`, `534c3a4`), `README.md` (`61f0fe0`).
+
+What it drives against the live server (validated first by a one-off protocol
+probe): create/join room, join-before-ready (a 1/1 ready flips phase - required
+ordering, discovered during design), both ready with `X-Player-Token`, game
+session create + `POST /{roomId}/sessions` registration, a real first game
+action, polled phase lifecycle, leave/delete/404 teardown.
+
+### Part B - acceptance evidence (raw)
+
+- `bash scripts/e2e/run_soak.sh` (30s): 10 waves, 20 players,
+  **ok=20 interrupted=0 failed=0**, leak check clean,
+  **`SOAK OK`**, exit 0
+  (raw: `%TEMP%\step6a\soak-base.txt`).
+- `bash scripts/e2e/run_soak.sh --chaos`: SIGKILL confirmed (health
+  unreachable), restart healthy, double-ready scenario:
+  concurrent ready owner=200 guest=200, phase `READY_CHECK`,
+  late duplicate ready **409**, room still settled to `GAME_OVER`, teardown
+  clean; drain 8 players: ok=2 interrupted=6 (chaos-window, expected)
+  **failed=0**; leak check clean; **`SOAK OK (chaos)`**, exit 0
+  (raw: `%TEMP%\step6a\soak-chaos.txt`).
+
+### Part B - findings
+
+1. **Server gap (reported, NOT fixed - Part B is read-only for production
+   code)**: `POST /api/rooms` with a missing top-level `ownerId` returns
+   **500** (`"Cannot invoke \"Object.hashCode()\" because \"key\" is null"`)
+   instead of 400. Path: `GameRoomController.createRoom`
+   (GameRoomController.java:33) -> `GameRoomService.createRoom`
+   (`players.put(ownerId, ...)` / `issuePlayerToken(roomId, null)` - null key
+   into a `ConcurrentHashMap`) -> generic handler in `GlobalExceptionHandler`
+   (GlobalExceptionHandler.java:84). Discovered when a harness payload bug
+   sent `ownerId` nested inside `settings` (harness bug fixed); the server-side
+   missing-field validation gap is left for a curator decision. `README.md`
+   documents it under Known findings.
+2. **Double-ready / race outcome: clean.** Concurrent duplicate readys are
+   serialized by `synchronized markPlayerReady` (both 200), a ready after the
+   phase leaves `LOBBY` is `IllegalStateException` -> **409 CONFLICT**
+   (GlobalExceptionHandler.java:69), and the room still reaches `GAME_OVER` -
+   no stuck room, no 5xx.
+3. **TTLs are outside the soak window** (documented in README, not asserted):
+   game sessions `SESSION_TTL = 30 min`, rooms `ROOM_TTL = 2 h` /
+   `EMPTY_ROOM_TTL = 5 min`, all compile-time constants; a room is removed
+   immediately when its last player leaves. Leak-freedom is asserted at room
+   level after every run instead.
+4. **Harness bugs found by the harness itself (fixed in harness only)**:
+   (a) a scratch var named `TMP` clobbered the inherited Windows `TMP` env var
+   and broke the JVM's `java.io.tmpdir` on the next start - renamed
+   `HTTP_TMP` (`bbc24b7`); (b) msys `$!` did not match the Windows listener
+   pid, so `kill -9` silently missed - `start_server.sh` now records the
+   Windows pid via `netstat` and stop/chaos signal with `taskkill` (`//F` =
+   `/F` after msys conversion) (`534c3a4`). No application code involved.
+
+### Files touched in Step 6a (scope proof)
+
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/minesweeper/domain/MinesweeperSessionTest.java`
+  (FIX A1 only)
+- `games-backend/src/main/java/com/KIRA_ZINA/backend/config/RateLimitFilter.java`
+  (FIX A2: Javadoc on the two constants - no logic)
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/config/RateLimitFilterPropertiesTest.java`
+  (FIX A2: +1 drift test)
+- `scripts/e2e/start_server.sh`, `stop_server.sh`, `player.sh`, `run_soak.sh`,
+  `README.md` (new; no production code, no new dependencies)
+- `CHANGELOG.md` (this section)
+
+No production code was changed for Part B; no gameplay, JSON, or signature
+changes anywhere in 6a. No test was disabled or weakened.
