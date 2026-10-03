@@ -4,9 +4,10 @@
 # Usage:
 #   bash scripts/e2e/stop_server.sh
 #
-# Sequence: SIGTERM (server.shutdown=graceful drains Tomcat), wait for the
-# health endpoint to go down; if still up after 10s escalate to taskkill /F,
-# then verify. Idempotent: no PID file and no healthy server = exit 0.
+# Sequence: taskkill (graceful attempt - msys kill is unreliable across
+# process namespaces), wait for the health endpoint to go down; if still up
+# after 10s escalate to taskkill /F, then verify.
+# Idempotent: no PID file and no healthy server = exit 0.
 
 set -u
 
