@@ -29,8 +29,8 @@ ROLE="${1:?usage: player.sh owner|guest <pair> <game> [timeLimit] <workdir>}"
 PAIR="${2:?pair id}"
 GAME="${3:?game type}"
 BASE_URL="${BASE_URL:-http://localhost:8080}"
-TMP="$(mktemp)"
-trap 'rm -f "$TMP"' EXIT
+HTTP_TMP="$(mktemp)"
+trap 'rm -f "$HTTP_TMP"' EXIT
 
 STATUS=""
 BODY=""
@@ -61,12 +61,12 @@ chaos_hit() {
 request() {
   local method="$1" path="$2" json="${3-}" token="${4-}"
   local attempt=0
-  local -a args=(-sS --max-time 10 -X "$method" -o "$TMP" -w '%{http_code}')
+  local -a args=(-sS --max-time 10 -X "$method" -o "$HTTP_TMP" -w '%{http_code}')
   [ -n "$json" ] && args+=(-H 'Content-Type: application/json' -d "$json")
   [ -n "$token" ] && args+=(-H "X-Player-Token: $token")
   while :; do
     if STATUS="$(curl "${args[@]}" "$BASE_URL$path" 2>/dev/null)"; then
-      BODY="$(cat "$TMP")"
+      BODY="$(cat "$HTTP_TMP")"
       if [ "$STATUS" = 429 ]; then
         attempt=$((attempt + 1))
         if [ "$attempt" -ge 5 ]; then fail "rate limited 429 x$attempt on $method $path"; fi

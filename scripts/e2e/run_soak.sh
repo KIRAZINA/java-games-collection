@@ -36,7 +36,7 @@ CHAOS_FLAG="$WORK/.chaos-flag"
 export E2E_CHAOS_FLAG="$CHAOS_FLAG"
 [ "$CHAOS" = 1 ] || unset E2E_CHAOS_FLAG
 
-TMP="$(mktemp)"
+HTTP_TMP="$(mktemp)"
 PLAYER_PIDS=()
 PLAYER_LOGS=()
 WAVES=0
@@ -44,15 +44,15 @@ FIRE_CHAOS_AT=$((DURATION / 2))
 CHAOS_FIRED=0
 
 cleanup() {
-  rm -f "$TMP"
+  rm -f "$HTTP_TMP"
   bash "$E2E_DIR/stop_server.sh" >/dev/null 2>&1 || true
   rm -rf "$WORK"
 }
 trap cleanup EXIT
 
 req_get() { # -> STATUS, BODY
-  STATUS="$(curl -sS --max-time 10 -o "$TMP" -w '%{http_code}' "$BASE_URL$1" 2>/dev/null)" || STATUS="curl-error"
-  BODY="$(cat "$TMP" 2>/dev/null || true)"
+  STATUS="$(curl -sS --max-time 10 -o "$HTTP_TMP" -w '%{http_code}' "$BASE_URL$1" 2>/dev/null)" || STATUS="curl-error"
+  BODY="$(cat "$HTTP_TMP" 2>/dev/null || true)"
 }
 
 die() {
@@ -72,18 +72,18 @@ echo "$START_OUT"
 double_ready_scenario() {
   echo "=== double-ready scenario ==="
   local pair="dr" wt wr out="$WORK/dr.out"
-  STATUS="$(curl -sS --max-time 10 -o "$TMP" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  STATUS="$(curl -sS --max-time 10 -o "$HTTP_TMP" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d "{\"roomName\":\"soak-$pair\",\"gameType\":\"MINESWEEPER\",\"settings\":{\"gameType\":\"MINESWEEPER\",\"settings\":{\"rows\":9,\"cols\":9,\"mines\":10},\"passwordProtected\":false,\"passwordHash\":null,\"allowBots\":false,\"maxPlayers\":2,\"timeLimitSeconds\":8,\"isSinglePlayer\":false},\"ownerId\":\"soak-$pair-own\",\"ownerName\":\"Dr Own\"}" \
     "$BASE_URL/api/rooms" 2>/dev/null)" || true
-  [ "$STATUS" = 201 ] || die "double-ready: create room" "$(cat "$TMP")"
+  [ "$STATUS" = 201 ] || die "double-ready: create room" "$(cat "$HTTP_TMP")"
   local room token
-  room="$(sed -n 's/.*"roomId":"\([^"]*\)".*/\1/p' "$TMP" | head -n 1)"
-  token="$(sed -n 's/.*"playerToken":"\([^"]*\)".*/\1/p' "$TMP" | head -n 1)"
-  STATUS="$(curl -sS --max-time 10 -o "$TMP" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  room="$(sed -n 's/.*"roomId":"\([^"]*\)".*/\1/p' "$HTTP_TMP" | head -n 1)"
+  token="$(sed -n 's/.*"playerToken":"\([^"]*\)".*/\1/p' "$HTTP_TMP" | head -n 1)"
+  STATUS="$(curl -sS --max-time 10 -o "$HTTP_TMP" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d '{"playerId":"soak-dr-gst","playerName":"Dr Gst"}' "$BASE_URL/api/rooms/$room/join" 2>/dev/null)" || true
-  [ "$STATUS" = 200 ] || die "double-ready: join" "$(cat "$TMP")"
+  [ "$STATUS" = 200 ] || die "double-ready: join" "$(cat "$HTTP_TMP")"
   local gtoken
-  gtoken="$(sed -n 's/.*"playerToken":"\([^"]*\)".*/\1/p' "$TMP" | head -n 1)"
+  gtoken="$(sed -n 's/.*"playerToken":"\([^"]*\)".*/\1/p' "$HTTP_TMP" | head -n 1)"
 
   # both readys fired concurrently: serialized server-side, both must be 200
   curl -sS --max-time 10 -o "$WORK/dr_r1" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
@@ -108,10 +108,10 @@ double_ready_scenario() {
   done
   [ "$st" != LOBBY ] || die "double-ready: room stuck in LOBBY" "$BODY"
   echo "  phase after readys: $st"
-  STATUS="$(curl -sS --max-time 10 -o "$TMP" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
+  STATUS="$(curl -sS --max-time 10 -o "$HTTP_TMP" -w '%{http_code}' -X POST -H 'Content-Type: application/json' \
     -d '{"playerId":"soak-dr-own"}' -H "X-Player-Token: $token" "$BASE_URL/api/rooms/$room/ready" 2>/dev/null)" || true
   echo "  late duplicate ready: $STATUS (expect 409)"
-  [ "$STATUS" = 409 ] || die "double-ready: late ready expected 409" "$(cat "$TMP")"
+  [ "$STATUS" = 409 ] || die "double-ready: late ready expected 409" "$(cat "$HTTP_TMP")"
 
   # room must still settle (no stuck room after the duplicate/race traffic)
   i=0
@@ -122,12 +122,12 @@ double_ready_scenario() {
   done
   case "$BODY" in *'"state":"GAME_OVER"'*) ;; *) die "double-ready: room did not reach GAME_OVER (stuck room)" "$BODY" ;; esac
 
-  STATUS="$(curl -sS --max-time 10 -o "$TMP" -w '%{http_code}' -X DELETE -H 'Content-Type: application/json' \
+  STATUS="$(curl -sS --max-time 10 -o "$HTTP_TMP" -w '%{http_code}' -X DELETE -H 'Content-Type: application/json' \
     -d '{"playerId":"soak-dr-gst"}' -H "X-Player-Token: $gtoken" "$BASE_URL/api/rooms/$room/leave" 2>/dev/null)" || true
-  [ "$STATUS" = 204 ] || die "double-ready: guest leave" "$(cat "$TMP")"
-  STATUS="$(curl -sS --max-time 10 -o "$TMP" -w '%{http_code}' -X DELETE -H 'Content-Type: application/json' \
+  [ "$STATUS" = 204 ] || die "double-ready: guest leave" "$(cat "$HTTP_TMP")"
+  STATUS="$(curl -sS --max-time 10 -o "$HTTP_TMP" -w '%{http_code}' -X DELETE -H 'Content-Type: application/json' \
     -d '{"requesterId":"soak-dr-own"}' -H "X-Player-Token: $token" "$BASE_URL/api/rooms/$room" 2>/dev/null)" || true
-  [ "$STATUS" = 204 ] || die "double-ready: owner delete" "$(cat "$TMP")"
+  [ "$STATUS" = 204 ] || die "double-ready: owner delete" "$(cat "$HTTP_TMP")"
   echo "=== double-ready scenario OK ==="
 }
 
