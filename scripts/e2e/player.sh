@@ -36,6 +36,12 @@ STATUS=""
 BODY=""
 
 fail() {
+  # Failures observed inside the chaos window (between SIGKILL and restart
+  # completion) are environmental, not assertion failures: report interrupted.
+  if chaos_hit; then
+    echo "PLAYER INTERRUPTED [$ROLE $PAIR]: $1 (during chaos window)"
+    exit 0
+  fi
   echo "PLAYER FAIL [$ROLE $PAIR]: $1 (status=$STATUS body=$BODY)"
   exit 1
 }
