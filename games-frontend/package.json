@@ -13,16 +13,17 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "vite": "latest"
   },
   "devDependencies": {
-    "vitest": "^1.6.0",
-    "@vitest/ui": "^1.6.0",
+    "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^6.4.6",
     "@testing-library/react": "^15.0.7",
     "@testing-library/user-event": "^14.5.2",
-    "@testing-library/jest-dom": "^6.4.6",
-    "jsdom": "^24.1.0"
+    "@vitest/ui": "^1.6.0",
+    "jsdom": "^24.1.0",
+    "vitest": "^1.6.0"
   }
 }
