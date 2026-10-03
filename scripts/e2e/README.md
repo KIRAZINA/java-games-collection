@@ -82,10 +82,13 @@ at room level after every run instead.
 - any `PLAYER FAIL`, stuck room, leaked room, failed scenario → diagnostics on
   stderr, exit 1
 
-## Known findings (reported, not fixed — Step 6a Part B is read-only for
-production code)
+## Known findings
 
-- `POST /api/rooms` with a missing top-level `ownerId` returns **500**
-  (`ConcurrentHashMap` null-key NPE in `GameRoomService.createRoom` via
-  `issuePlayerToken`) instead of 400. `CreateRoomRequest` has no null
-  validation; `GlobalExceptionHandler` maps the NPE to the generic 500.
+- none — the former finding (`POST /api/rooms` with a missing top-level
+  `ownerId` returned **500** instead of 400) was fixed in Step 6b Part A:
+  `CreateRoomRequest` now carries bean validation (`@NotBlank ownerId`,
+  `@NotBlank roomName`, `@NotBlank ownerName`, `@NotNull gameType`) and
+  `GlobalExceptionHandler` maps `MethodArgumentNotValidException` to
+  **400** `{"error":"ownerId: must not be blank","status":400}`. Verified by
+  `DtoValidationTest` and a 21-case before/after probe matrix (raw evidence:
+  `%TEMP%\step6b\pre-fix.txt`, `%TEMP%\step6b\post-fix.txt`).

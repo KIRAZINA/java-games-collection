@@ -1248,3 +1248,125 @@ action, polled phase lifecycle, leave/delete/404 teardown.
 
 No production code was changed for Part B; no gameplay, JSON, or signature
 changes anywhere in 6a. No test was disabled or weakened.
+
+## STEP 6b - queue fix: DTO bean validation (Part A) + real-browser Playwright e2e (Part B)
+
+### Part A - the finding (from Step 6a Part B)
+
+`POST /api/rooms` with a missing/null top-level `ownerId` returned **500**
+(`"Cannot invoke \"Object.hashCode()\" because \"key\" is null"` -
+`ConcurrentHashMap` null-key NPE in `GameRoomService.createRoom` /
+`issuePlayerToken`) instead of 400. Root cause: zero bean validation on any
+request DTO and no `MethodArgumentNotValidException` handler (the catch-all in
+`GlobalExceptionHandler` mapped the NPE to the generic 500).
+
+### Part A - curator decision: `settings` stays optional
+
+The spec's `@NotNull` on nested `settings` conflicts with the controller's
+deliberate defaulting (`request.settings() != null ? request.settings() :
+GameSettings.defaultFor(request.gameType())`) and with ~10 existing green tests
+that POST `/api/rooms` without `settings` expecting 201
+(`GamesBackendIntegrationTest` x6, `PlayerTokenTest` x2, `GameRoomExtractionLoggingTest`
+x1). Curator chose **keep defaulting**: `settings` gets `@Valid` cascade only
+(no `@NotNull`); null settings keeps returning 201 with `defaultFor` values
+(probe case 8, before/after). Identity fields are validated strictly.
+
+### Part A - changes
+
+- `games-backend/pom.xml`: + `spring-boot-starter-validation`
+  (`${spring.boot.version}` = 3.3.5, production scope - bean validation is
+  impossible without an implementation; the "no production dependencies"
+  constraint scopes Part B tooling). Flagged here for transparency.
+- `GameRoomController.java`: `@Valid` on all 8 `@RequestBody` params;
+  `@NotBlank(message = "must not be blank")` on `roomName`, `ownerId`,
+  `ownerName`, `playerId`, `playerName`, `spectatorId`, `spectatorName`,
+  `requesterId`, `sessionId`; `@NotNull(message = "must not be null")` on
+  `gameType` (a `@NotBlank` on an enum has no validator and would 500);
+  `password` intentionally stays nullable (public rooms).
+- `GameSettings.java`: `@Min(1)`/`@Max(8)` on `maxPlayers` - safe because the
+  frontend create form binds `min="1" max="8"`, quick play sends 1, the soak
+  harness sends 2, and every existing settings payload is within 1-8.
+- `GlobalExceptionHandler.java`: `MethodArgumentNotValidException` -> **400**
+  `{"error": "<field>: <message>[, ...]", "status": 400}` (same map shape as
+  the existing 404/405/403 handlers; field errors joined, named per field).
+- `DtoValidationTest.java` (new, 6 tests): missing ownerId (the 6a finding),
+  blank ownerId, blank roomName + null ownerName, null gameType, maxPlayers 0
+  (cascade proof), null join playerId - each asserts 400 + the field name in
+  `$.error` + `$.message` absent (shape pin).
+
+### Part A - finding discovered while proving: locale-dependent error messages
+
+First post-fix probe (raw: `%TEMP%\step6b\post-fix.txt` intermediate run) came
+back **Ukrainian**: `{"error":"ownerId: не може бути пустим","status":400}` -
+Hibernate Validator 8.0.3 bundles `ValidationMessages_uk.properties` and this
+machine's JVM default locale resolves `uk_UA` (verified: `jshell` ->
+`uk_UA`, `mvn -X` -> `user.language: uk user.country: UA`). The same machine's
+surefire-forked test JVM interpolated the **English** messages (the English
+assertions passed), so the two launch paths disagreed - an API error contract
+that depends on the JVM's locale and launch path is nondeterministic. Fix:
+every constraint now carries an explicit English `message` literal
+(`374eaa8`), which bypasses bundle lookup entirely. Proven
+locale-independent twice: bash-launched server -> English (post-fix probe
+below) and a forced `mvn test -Duser.language=ru` run -> all 6 tests green.
+
+### Part A - DTO null-safety sweep (all request DTOs; pre-fix = 21-case live probe)
+
+| DTO.field | pre-fix (raw probe) | action |
+| --- | --- | --- |
+| `CreateRoomRequest.roomName` | null -> **201** (field absent from body), blank -> **201** (`"roomName":"  "`) | `@NotBlank` -> 400 |
+| `CreateRoomRequest.gameType` | null + settings absent -> **500** (`GameType.ordinal() ... is null` NPE in `defaultFor` switch) | `@NotNull` -> 400 |
+| `CreateRoomRequest.settings` | null -> **201** via `defaultFor` (deliberate) | kept defaulting (curator decision); `@Valid` cascade only |
+| `CreateRoomRequest.ownerId` | missing -> **500**, null -> **500** (the 6a finding), blank -> **201** (empty-key room) | `@NotBlank` -> 400 |
+| `CreateRoomRequest.ownerName` | null -> **201** (`ownerName` absent) | `@NotBlank` -> 400 |
+| `GameSettings.maxPlayers` | 0 -> 400 but via service IAE `"Player not in room"` (wrong route, inconsistent shape) | `@Min(1)`/`@Max(8)` -> 400 validation, `settings.maxPlayers` named |
+| `JoinRoomRequest.playerId` | null -> **500** (null-key NPE) | `@NotBlank` -> 400 |
+| `JoinRoomRequest.playerName` | null -> **200** (silent ghost player) | `@NotBlank` -> 400 |
+| `JoinRoomRequest.password` | null = public room (legitimate) | n/a - intentionally nullable |
+| `SpectateRequest.spectatorId` | null -> **500** (`"An unexpected error occurred: null"`) | `@NotBlank` -> 400 |
+| `SpectateRequest.spectatorName` | null -> **200** (silent) | `@NotBlank` -> 400 |
+| `LeaveRequest.playerId` | null + owner token -> **500** (null-key NPE) | `@NotBlank` -> 400 (validation now precedes token check: field-invalid -> 400 even with a token) |
+| `DeleteRoomRequest.requesterId` | null + owner token -> **500** | `@NotBlank` -> 400 (same precedence note) |
+| `RegisterSessionRequest.playerId` | null -> **500** | `@NotBlank` -> 400 |
+| `RegisterSessionRequest.sessionId` | null -> **500** (`"...error occurred: null"`) | `@NotBlank` -> 400 |
+| `MarkReadyRequest.playerId` | null + owner token -> **500** | `@NotBlank` -> 400 |
+| `BlackjackController.CreateSessionRequest.initialBalance` / `.difficulty` | null fields -> defaults (**201**, tested by `createBlackjackSessionNoBody_201`) | n/a - deliberate nullable, service defaults |
+| `BlackjackController.BetRequest.amount` | primitive `double` (null coerces 0); negative/>max already **400** via IAE (existing tests) | n/a - primitive, existing 400 path |
+| `MinesweeperController.CreateSessionRequest.rows/.cols/.mines` | null -> defaults (**201**, tested); out-of-range already **400** via IAE (existing test) | n/a - deliberate nullable |
+| `MinesweeperController.CellActionRequest.row/.col` | primitives, out-of-range already 400 via IAE | n/a - primitive |
+| `Game2048Controller.MoveRequest.direction` | null -> **400** already via service IAE (existing `game2048NullDirection_400`); bad enum -> 400 `HttpMessageNotReadable` | n/a - already 400; no `@Valid` needed |
+
+`@Valid` was added only where constraints exist (the 8 `GameRoomController`
+params); the three game controllers' records have no constraints, so no
+annotation was added there (documented, not skipped silently).
+
+### Part A - acceptance evidence (raw)
+
+- **Pre-fix probe** (21 cases, HEAD `f064fa6`, raw `%TEMP%\step6b\pre-fix.txt`):
+  500s: missing/null ownerId, null gameType, null join/spectate/leave/ready/
+  delete/registerSession ids (9 cases); silent 201/200: blank ownerId, null/
+  blank roomName, null ownerName, null playerName, null spectatorName (6);
+  400 (already): maxPlayers 0 via service IAE; unchanged 201: settings null,
+  blackjack no-body, minesweeper `{}`.
+- **Post-fix probe** (same 21 cases, HEAD `374eaa8`, raw
+  `%TEMP%\step6b\post-fix.txt`): every invalid case -> **400**
+  `{"error":"<field>: must not be blank","status":400}` (English, field named);
+  case 8 settings null -> **201** (defaulting survives); cases 20/21 -> **201**
+  (unchanged success shapes); case 10 valid create -> 201.
+- 3x full suite on final code: `Tests run: 255, Failures: 0, Errors: 0,
+  Skipped: 0` + `BUILD SUCCESS` all three (raw: `%TEMP%\step6b\mvn-run1.txt`,
+  `-2`, `-3`). Arithmetic: 249 baseline + 6 `DtoValidationTest` = 255.
+- Supplementary locale proof: `mvn test -Dtest=DtoValidationTest -Duser.language=ru`
+  -> 6/6 green (raw `%TEMP%\step6b\mvn-ru.txt`).
+
+### Files touched in Step 6b Part A (scope proof)
+
+- `games-backend/pom.xml` (+ validation starter)
+- `games-backend/src/main/java/com/KIRA_ZINA/backend/common/GameRoomController.java`
+- `games-backend/src/main/java/com/KIRA_ZINA/backend/common/GameSettings.java`
+- `games-backend/src/main/java/com/KIRA_ZINA/backend/config/GlobalExceptionHandler.java`
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/api/DtoValidationTest.java` (new)
+- `scripts/e2e/README.md` (known finding -> resolved)
+- `CHANGELOG.md` (this section)
+
+No successful-response JSON shape changed; no existing validation changed or
+test removed/weakened; no gameplay logic touched.
