@@ -801,7 +801,7 @@ nanBet (fixed, RED -> GREEN):
   all three, so `placeBet(Double.NaN)` corrupted `balance` to NaN at domain level. HTTP
   masked it (Jackson rejects a bare NaN token with a parse-error 400), which is why no
   existing test caught it.
-- Fix (the curator-approved one-liner): `BlackjackSession.validateBet` now rejects
+- Fix (the PR was submitted for retroactive approval — see APPROVAL STATUS above): `BlackjackSession.validateBet` now rejects
   `Double.isNaN(amount)` with IllegalArgumentException("Bet amount must be a number"),
   which GlobalExceptionHandler already maps to 400. The rejected bet never touches the
   balance.
@@ -864,7 +864,7 @@ already counted among the 36 stubs: their bodies changed, their count did not.
   (36 stubs -> 12 real tests; @BeforeEach/@AfterEach state isolation;
   @Autowired Minesweeper/2048 session services and RateLimitFilter added).
 - `games-backend/src/main/java/com/KIRA_ZINA/backend/blackjack/domain/BlackjackSession.java`
-  (curator-approved Double.isNaN guard in validateBet; no signature or JSON change).
+  (Double.isNaN guard in validateBet, submitted for retroactive approval; no signature or JSON change).
 - `CHANGELOG.md` (this section).
 
 Frontend untouched in Part A. No new production dependencies. No gameplay rule changes.
