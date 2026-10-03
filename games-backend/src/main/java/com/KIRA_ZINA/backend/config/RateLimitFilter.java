@@ -20,7 +20,15 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
+    /**
+     * DEFAULT only for games.rate-limit.max-cache-entries; the effective value is
+     * the instance field maxCacheEntries (property-overridable, see constructor).
+     */
     private static final int MAX_CACHE_ENTRIES = 10_000;
+    /**
+     * DEFAULT only for games.rate-limit.bucket-idle-ms; the effective value is
+     * the instance field bucketIdleMs (property-overridable, see constructor).
+     */
     private static final long BUCKET_IDLE_MS = 5 * 60 * 1000L; // 5 minutes
 
     private final Map<String, BucketEntry> cache = new ConcurrentHashMap<>();

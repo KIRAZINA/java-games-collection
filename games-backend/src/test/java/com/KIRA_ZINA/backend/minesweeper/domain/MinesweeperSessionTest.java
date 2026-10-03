@@ -3,6 +3,7 @@ package com.KIRA_ZINA.backend.minesweeper.domain;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -380,36 +381,34 @@ class MinesweeperSessionTest {
     }
 
     /**
-     * Opens cells systematically to win the game: iterates all cells,
-     * skipping mines, until won=true. Retries with a fresh board if a
-     * mine is accidentally opened before the last safe cell triggers
-     * the win (random mine placement can cause this on small boards).
+     * Opens cells systematically to win the game: after the first click places
+     * the mines, opens every COVERED non-mine cell. Safe cells are selected from
+     * the session's private mines BitSet (the cell view hides mine status during
+     * play), so one deterministic pass wins without a retry loop.
      */
     private MinesweeperState openAllSafely(MinesweeperSession session, int rows, int cols) {
-        for (int attempt = 0; attempt < 50; attempt++) {
-            MinesweeperState state = session.open(0, 0);
-            if (state.gameOver()) return state;
+        MinesweeperState state = session.open(0, 0);
+        assertThat(state.gameOver() && !state.won())
+                .as("first click on the safe zone must never lose")
+                .isFalse();
 
-            boolean madeProgress = true;
-            while (!state.gameOver() && madeProgress) {
-                madeProgress = false;
-                for (int r = 0; r < rows && !state.gameOver(); r++) {
-                    for (int c = 0; c < cols && !state.gameOver(); c++) {
-                        MinesweeperCellView cell = cellAt(state, r, c);
-                        if (cell.state() == MinesweeperCellState.COVERED && !cell.mine()) {
-                            state = session.open(r, c);
-                            madeProgress = true;
-                        }
-                    }
-                }
-            }
-
-            if (state.won()) return state;
-            if (state.gameOver()) {
-                session.reset();
+        java.util.BitSet mines = minesOf(session);
+        List<Integer> safeTargets = new ArrayList<>();
+        for (int i = 0; i < rows * cols; i++) {
+            if (!mines.get(i) && state.cells().get(i).state() == MinesweeperCellState.COVERED) {
+                safeTargets.add(i);
             }
         }
-        return session.state();
+        for (int index : safeTargets) {
+            assertThat(mines.get(index))
+                    .as("determinism guard: target cell %d must not be a mine", index)
+                    .isFalse();
+        }
+
+        for (int index : safeTargets) {
+            state = session.open(index / cols, index % cols);
+        }
+        return state;
     }
 
     /**

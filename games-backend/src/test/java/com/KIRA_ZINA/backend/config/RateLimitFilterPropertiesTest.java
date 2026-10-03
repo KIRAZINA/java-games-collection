@@ -64,4 +64,20 @@ class RateLimitFilterPropertiesTest {
         assertEquals(300000L, readField(filter, "bucketIdleMs"));
         assertFalse((Boolean) readField(filter, "trustXFF"));
     }
+
+    @Test
+    @DisplayName("with an empty Environment the instance fields equal the static DEFAULT constants (no drift)")
+    void instanceFieldsMatchStaticDefaultsWithEmptyEnvironment() throws Exception {
+        RateLimitFilter filter = new RateLimitFilter(new MockEnvironment());
+
+        Field maxStatic = RateLimitFilter.class.getDeclaredField("MAX_CACHE_ENTRIES");
+        maxStatic.setAccessible(true);
+        Field idleStatic = RateLimitFilter.class.getDeclaredField("BUCKET_IDLE_MS");
+        idleStatic.setAccessible(true);
+
+        assertEquals(maxStatic.getInt(null), readField(filter, "maxCacheEntries"),
+                "maxCacheEntries must equal the MAX_CACHE_ENTRIES default when no property is set");
+        assertEquals(idleStatic.getLong(null), readField(filter, "bucketIdleMs"),
+                "bucketIdleMs must equal the BUCKET_IDLE_MS default when no property is set");
+    }
 }
