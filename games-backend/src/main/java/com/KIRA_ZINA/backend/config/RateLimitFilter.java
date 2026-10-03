@@ -26,8 +26,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final Map<String, BucketEntry> cache = new ConcurrentHashMap<>();
     private final Set<String> allowedOrigins = new HashSet<>();
     private final boolean trustXFF;
+    private final int maxCacheEntries;
+    private final long bucketIdleMs;
 
-    public RateLimitFilter() {
+    public RateLimitFilter(Environment environment) {
         this.allowedOrigins.add("http://localhost:5173");
         this.allowedOrigins.add("http://localhost:3000");
         String envOrigins = System.getenv("GAMES_CORS_ALLOWED_ORIGINS");
@@ -36,7 +38,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 allowedOrigins.add(origin.trim());
             }
         }
-        this.trustXFF = "true".equalsIgnoreCase(System.getProperty("games.rate-limit.trust-forwarded-for", System.getenv().getOrDefault("GAMES_RATE_LIMIT_TRUST_XFF", "false")));
+        this.trustXFF = "true".equalsIgnoreCase(
+                System.getProperty("games.rate-limit.trust-forwarded-for",
+                        environment.getProperty("games.rate-limit.trust-forwarded-for", "false")));
+        this.maxCacheEntries = environment.getProperty(
+                "games.rate-limit.max-cache-entries", Integer.class, MAX_CACHE_ENTRIES);
+        this.bucketIdleMs = environment.getProperty(
+                "games.rate-limit.bucket-idle-ms", Long.class, BUCKET_IDLE_MS);
     }
 
     private static class BucketEntry {
@@ -101,7 +109,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         }
 
         String ip = resolveIP(request);
-        if (cache.size() >= MAX_CACHE_ENTRIES) {
+        if (cache.size() >= maxCacheEntries) {
             evictOldestIdle();
         }
 
@@ -152,8 +160,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private void evictOldestIdle() {
         long now = System.currentTimeMillis();
-        cache.entrySet().removeIf(e -> (now - e.getValue().lastAccessed) > BUCKET_IDLE_MS);
-        if (cache.size() >= MAX_CACHE_ENTRIES) {
+        cache.entrySet().removeIf(e -> (now - e.getValue().lastAccessed) > bucketIdleMs);
+        if (cache.size() >= maxCacheEntries) {
             // If still over capacity, evict oldest by access time
             Optional<Map.Entry<String, BucketEntry>> oldest = cache.entrySet().stream()
                     .min(Comparator.comparingLong(e -> e.getValue().lastAccessed));

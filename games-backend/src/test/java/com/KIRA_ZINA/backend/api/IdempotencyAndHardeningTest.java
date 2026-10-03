@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.mock.env.MockEnvironment;
 import org.springframework.mock.web.MockFilterChain;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -267,7 +268,7 @@ public class IdempotencyAndHardeningTest {
             String prior = System.getProperty(prop);
             try {
                 System.setProperty(prop, trustValue);
-                return new RateLimitFilter();
+                return new RateLimitFilter(new MockEnvironment());
             } finally {
                 if (prior == null) {
                     System.clearProperty(prop);
@@ -305,7 +306,7 @@ public class IdempotencyAndHardeningTest {
             // Both phases run under the same machine load as the measured run, so the budget
             // tracks contention instead of failing because of it. Correctness assertions
             // (cap + eviction + fresh-cache) and distinctIps=20_000 are unchanged.
-            RateLimitFilter calibFresh = new RateLimitFilter();
+            RateLimitFilter calibFresh = new RateLimitFilter(new MockEnvironment());
             long aStart = System.nanoTime();
             for (int i = 0; i < calibrationIps; i++) {
                 String ip = "172.16." + ((i >> 8) & 0xFF) + "." + (i & 0xFF);
@@ -314,7 +315,7 @@ public class IdempotencyAndHardeningTest {
             long aMs = Math.max(1, (System.nanoTime() - aStart) / 1_000_000L);
             double msPerReqFresh = (double) aMs / calibrationIps;
 
-            RateLimitFilter calibAtCap = new RateLimitFilter();
+            RateLimitFilter calibAtCap = new RateLimitFilter(new MockEnvironment());
             for (int i = 0; i < maxEntries; i++) {
                 String ip = "192.168." + ((i >> 8) & 0xFF) + "." + (i & 0xFF);
                 postThrough(calibAtCap, ip, null);
@@ -332,7 +333,7 @@ public class IdempotencyAndHardeningTest {
             long projectionMs = (long) (freshPhase * msPerReqFresh + atCapPhase * msPerReqAtCap);
             long budgetMs = 3L * Math.max(1, projectionMs);
 
-            RateLimitFilter filter = new RateLimitFilter();
+            RateLimitFilter filter = new RateLimitFilter(new MockEnvironment());
             Map<String, Object> cache = cacheOf(filter);
             assertThat(cache).as("fresh filter must start with an empty cache").isEmpty();
 
@@ -388,7 +389,7 @@ public class IdempotencyAndHardeningTest {
         @Test
         @DisplayName("8. Idle bucket eviction works")
         void idleBucketEviction() throws Exception {
-            RateLimitFilter filter = new RateLimitFilter();
+            RateLimitFilter filter = new RateLimitFilter(new MockEnvironment());
             Map<String, Object> cache = cacheOf(filter);
             for (int i = 0; i < 20; i++) {
                 postThrough(filter, "10.1.0." + i, null);
