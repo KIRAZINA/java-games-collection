@@ -170,7 +170,11 @@ class MinesweeperSessionTest {
             session.open(4, 4);
             // Now find a mine cell and open it
             MinesweeperState stateAfterOpen = forceOpenMine(session, 9, 9);
-            if (stateAfterOpen != null) {
+            if (stateAfterOpen == null) {
+                // First click won instantly: no covered mine remained to open
+                assertThat(session.state().won()).isTrue();
+                assertThat(session.state().gameOver()).isTrue();
+            } else {
                 assertThat(stateAfterOpen.gameOver()).isTrue();
                 assertThat(stateAfterOpen.won()).isFalse();
             }
@@ -182,7 +186,12 @@ class MinesweeperSessionTest {
             MinesweeperSession session = new MinesweeperSession("reveal", 9, 9, 60);
             session.open(4, 4);
             MinesweeperState lostState = forceOpenMine(session, 9, 9);
-            if (lostState != null && lostState.gameOver() && !lostState.won()) {
+            if (lostState == null) {
+                // First click won instantly: no covered mine remained to open
+                assertThat(session.state().won()).isTrue();
+            } else {
+                assertThat(lostState.gameOver()).isTrue();
+                assertThat(lostState.won()).isFalse();
                 // All mines must be either OPENED (revealed) or FLAGGED (if correctly flagged)
                 for (MinesweeperCellView cell : lostState.cells()) {
                     if (cell.mine()) {
@@ -202,19 +211,30 @@ class MinesweeperSessionTest {
             session.open(4, 4);
             // Flag a cell that might not be a mine — we'll look for a non-mine cell and flag it
             MinesweeperState currentState = session.state();
-            MinesweeperCellView safeFlagTarget = currentState.cells().stream()
-                    .filter(c -> c.state() == MinesweeperCellState.COVERED && !c.mine())
-                    .findFirst()
-                    .orElse(null);
+            java.util.BitSet mines = minesOf(session);
+            MinesweeperCellView safeFlagTarget = null;
+            for (int i = 0; i < currentState.cells().size(); i++) {
+                MinesweeperCellView candidate = currentState.cells().get(i);
+                if (candidate.state() == MinesweeperCellState.COVERED && !mines.get(i)) {
+                    safeFlagTarget = candidate;
+                    break;
+                }
+            }
 
-            if (safeFlagTarget != null) {
+            if (safeFlagTarget == null) {
+                // First click won instantly: no covered safe cell remains to flag
+                assertThat(session.state().won()).isTrue();
+            } else {
                 session.toggleFlag(safeFlagTarget.row(), safeFlagTarget.col());
                 // Now trigger a loss
                 MinesweeperState lostState = forceOpenMine(session, 9, 9);
-                if (lostState != null && lostState.gameOver() && !lostState.won()) {
-                    MinesweeperCellView wrongFlagged = cellAt(lostState, safeFlagTarget.row(), safeFlagTarget.col());
-                    assertThat(wrongFlagged.state()).isEqualTo(MinesweeperCellState.WRONG_FLAG);
-                }
+                assertThat(lostState)
+                        .as("mines must still be covered after a non-winning first click")
+                        .isNotNull();
+                assertThat(lostState.gameOver()).isTrue();
+                assertThat(lostState.won()).isFalse();
+                MinesweeperCellView wrongFlagged = cellAt(lostState, safeFlagTarget.row(), safeFlagTarget.col());
+                assertThat(wrongFlagged.state()).isEqualTo(MinesweeperCellState.WRONG_FLAG);
             }
         }
     }
@@ -264,10 +284,12 @@ class MinesweeperSessionTest {
             MinesweeperSession session = new MinesweeperSession("go", 9, 9, 60);
             session.open(4, 4);
             MinesweeperState lostState = forceOpenMine(session, 9, 9);
-            if (lostState != null && lostState.gameOver()) {
-                // Additional opens should not change the state
-                MinesweeperState afterExtraOpen = session.open(0, 0);
-                assertThat(afterExtraOpen.gameOver()).isTrue();
+            // Additional opens should not change the state
+            MinesweeperState afterExtraOpen = session.open(0, 0);
+            assertThat(afterExtraOpen.gameOver()).isTrue();
+            if (lostState == null) {
+                // First click won instantly: the won state must also stay unchanged
+                assertThat(afterExtraOpen.won()).isTrue();
             }
         }
     }
@@ -393,14 +415,28 @@ class MinesweeperSessionTest {
     /**
      * Attempts to open a mine cell (after first click has been done).
      * Returns the resulting state, or null if no covered mine was found.
+     * Mines are hidden from MinesweeperCellView while the game is in progress
+     * (view.mine() only becomes true at gameOver), so the mine layout is read
+     * from the session's private BitSet via reflection.
      */
     private MinesweeperState forceOpenMine(MinesweeperSession session, int rows, int cols) {
         MinesweeperState state = session.state();
-        for (MinesweeperCellView cell : state.cells()) {
-            if (cell.mine() && cell.state() == MinesweeperCellState.COVERED) {
-                return session.open(cell.row(), cell.col());
+        java.util.BitSet mines = minesOf(session);
+        for (int i = 0; i < rows * cols; i++) {
+            if (mines.get(i) && state.cells().get(i).state() == MinesweeperCellState.COVERED) {
+                return session.open(i / cols, i % cols);
             }
         }
         return null;
+    }
+
+    private static java.util.BitSet minesOf(MinesweeperSession session) {
+        try {
+            java.lang.reflect.Field field = MinesweeperSession.class.getDeclaredField("mines");
+            field.setAccessible(true);
+            return (java.util.BitSet) field.get(session);
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError("cannot read mine layout", e);
+        }
     }
 }

@@ -153,21 +153,17 @@ class BlackjackSessionTest {
         @DisplayName("placeBet() in PLAYER_TURN phase throws IllegalStateException")
         void placeBetDuringPlayerTurnThrows() {
             BlackjackSession session = activeSession();
-            if (session.state().phase() == RoundPhase.PLAYER_TURN) {
-                assertThatThrownBy(() -> session.placeBet(5.0))
-                        .isInstanceOf(IllegalStateException.class);
-            }
+            assertThatThrownBy(() -> session.placeBet(5.0))
+                    .isInstanceOf(IllegalStateException.class);
         }
 
         @Test
         @DisplayName("hit() after stand() (ROUND_OVER) throws IllegalStateException")
         void hitAfterStandThrows() {
             BlackjackSession session = activeSession();
-            if (session.state().phase() == RoundPhase.PLAYER_TURN) {
-                session.stand();
-                assertThatThrownBy(session::hit)
-                        .isInstanceOf(IllegalStateException.class);
-            }
+            session.stand();
+            assertThatThrownBy(session::hit)
+                    .isInstanceOf(IllegalStateException.class);
         }
 
         @Test
@@ -442,15 +438,12 @@ class BlackjackSessionTest {
         @Test
         @DisplayName("dealer hand is hidden (1 card shown) during PLAYER_TURN")
         void dealerHandHiddenDuringPlayerTurn() {
-            BlackjackSession session = session(100.0);
-            session.startRound();
-            BlackjackState afterBet = session.placeBet(10.0);
+            BlackjackSession session = activeSession();
+            BlackjackState afterBet = session.state();
 
-            if (afterBet.phase() == RoundPhase.PLAYER_TURN) {
-                // Only the dealer's first card is visible
-                assertThat(afterBet.dealerCards()).hasSize(1);
-                assertThat(afterBet.dealerValue()).isNull();
-            }
+            // Only the dealer's first card is visible
+            assertThat(afterBet.dealerCards()).hasSize(1);
+            assertThat(afterBet.dealerValue()).isNull();
         }
 
         @Test
@@ -677,12 +670,18 @@ class BlackjackSessionTest {
     }
 
     /**
-     * Returns a session in PLAYER_TURN (or ROUND_OVER if natural blackjack).
+     * Returns a session in PLAYER_TURN (deterministic no-blackjack deck).
      * Balance = 100, bet = 10.
      */
     private static BlackjackSession activeSession() {
         BlackjackSession session = session(100.0);
         session.startRound();
+        // Deterministic deck: no blackjack on either side -> round stays in PLAYER_TURN
+        setupDeck(session,
+                new Card(Suit.HEARTS, Rank.FIVE),
+                new Card(Suit.CLUBS, Rank.NINE),
+                new Card(Suit.DIAMONDS, Rank.SIX),
+                new Card(Suit.SPADES, Rank.EIGHT));
         session.placeBet(10.0);
         return session;
     }
