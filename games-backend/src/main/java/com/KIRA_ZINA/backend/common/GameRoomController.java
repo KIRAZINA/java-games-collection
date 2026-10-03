@@ -179,38 +179,38 @@ public class GameRoomController {
     }
 
     public record CreateRoomRequest(
-            @NotBlank String roomName,
-            @NotNull GameType gameType,
+            @NotBlank(message = "must not be blank") String roomName,
+            @NotNull(message = "must not be null") GameType gameType,
             @Valid GameSettings settings,
-            @NotBlank String ownerId,
-            @NotBlank String ownerName
+            @NotBlank(message = "must not be blank") String ownerId,
+            @NotBlank(message = "must not be blank") String ownerName
     ) {}
 
     public record JoinRoomRequest(
-            @NotBlank String playerId,
-            @NotBlank String playerName,
+            @NotBlank(message = "must not be blank") String playerId,
+            @NotBlank(message = "must not be blank") String playerName,
             String password
     ) {}
 
     public record SpectateRequest(
-            @NotBlank String spectatorId,
-            @NotBlank String spectatorName
+            @NotBlank(message = "must not be blank") String spectatorId,
+            @NotBlank(message = "must not be blank") String spectatorName
     ) {}
 
     public record LeaveRequest(
-            @NotBlank String playerId
+            @NotBlank(message = "must not be blank") String playerId
     ) {}
 
     public record DeleteRoomRequest(
-            @NotBlank String requesterId
+            @NotBlank(message = "must not be blank") String requesterId
     ) {}
 
     public record RegisterSessionRequest(
-            @NotBlank String playerId,
-            @NotBlank String sessionId
+            @NotBlank(message = "must not be blank") String playerId,
+            @NotBlank(message = "must not be blank") String sessionId
     ) {}
 
     public record MarkReadyRequest(
-            @NotBlank String playerId
+            @NotBlank(message = "must not be blank") String playerId
     ) {}
 }

@@ -11,7 +11,7 @@ public record GameSettings(
         boolean passwordProtected,
         String passwordHash,
         boolean allowBots,
-        @Min(1) @Max(8) int maxPlayers,
+        @Min(value = 1, message = "must be greater than or equal to 1") @Max(value = 8, message = "must be less than or equal to 8") int maxPlayers,
         int timeLimitSeconds,
         boolean isSinglePlayer
 ) {
