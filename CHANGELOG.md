@@ -996,3 +996,119 @@ additions) = 63 + 24 = **87** tests across 8 files, 0 failing.
 
 No backend production or test changes in Part B. No gameplay rule changes. No new
 production dependencies. Successful-response JSON shapes untouched.
+
+## STEP 5b - audit and close the meta-gaps
+
+Prerequisite: 5a-r accepted. Process (mandatory from 5a): every file modified in this
+step was committed BEFORE its first modification; baseline snapshot commit
+`b26487e` (51 files) preceded all work; `git status --short <path>` + `git diff HEAD -- <path>`
+were captured (empty) before each modification, and untracked new files were committed
+immediately after creation.
+
+### Task 1 - CORS drift guard (meta-test)
+
+New `games-backend/src/test/java/com/KIRA_ZINA/backend/api/CorsDriftGuardTest.java`
+(commits `9a77161`, `8be8bd9`):
+- Scans every `@RestController`/`@Controller` bean from the ApplicationContext
+  (AopUtils-unwrapped), reflects over every `@RequestMapping`/`@GetMapping`/`@PostMapping`/
+  `@PutMapping`/`@DeleteMapping`/`@PatchMapping` method, collects every `@RequestHeader`
+  name (excluding standard browser headers: Content-Type, Accept, Origin, Referer,
+  User-Agent, Host).
+- Performs an OPTIONS preflight through the real filter chain
+  (`@AutoConfigureMockMvc(addFilters = true)`) and asserts every collected header is
+  present in the `Access-Control-Allow-Headers` response header emitted by
+  RateLimitFilter. Failure message names the header and the controller method.
+- Pass proof: `Tests run: 1, Failures: 0, Errors: 0, Skipped: 0` - BUILD SUCCESS
+  (raw: `%TEMP%\step5b\corsdrift-pass.txt`).
+- Negative control (temporary edit of RateLimitFilter, both allow-header lines, reverted
+  via `git checkout` with empty status/diff after restore): test FAILED with
+  `CORS drift - header(s) missing from Access-Control-Allow-Headers: ['x-player-token'
+  read by GameRoomController.markReady(...)]` - Tests run: 1, Failures: 1
+  (raw: `%TEMP%\step5b\corsdrift-fail.txt`). Re-run after restore: green.
+
+### Task 2 - games.* property/consumer audit
+
+Audit table (grep of `games\.<name>` against `games-backend/src/main`):
+
+| Property | Result |
+|---|---|
+| `games.blackjack.cleanup-delay-ms=60000` | READ - BlackjackSessionService.java:60 `@Scheduled(fixedDelayString=...)` |
+| `games.minesweeper.cleanup-delay-ms=60000` | READ - MinesweeperSessionService.java:59 `@Scheduled(fixedDelayString=...)` |
+| `games.2048.cleanup-delay-ms=60000` | READ - Game2048SessionService.java:50 `@Scheduled(fixedDelayString=...)` |
+| `games.cors.allowed-origins` | UNREAD - no consumer; RateLimitFilter reads the `GAMES_CORS_ALLOWED_ORIGINS` env var directly. ACTION: property line DELETED (zero behavior change; comment in application.properties now documents the real mechanism; no md references existed). |
+| `games.idempotency.cleanup-delay-ms=600000` | READ - IdempotencyService.java:162 `@Scheduled(fixedDelayString=...)`. Known case CONFIRMED. |
+| `games.rate-limit.max-cache-entries=10000` | UNREAD - hardcoded `MAX_CACHE_ENTRIES` constant. ACTION: WIRED via constructor `Environment` into instance field `maxCacheEntries` (defaults identical to old constant: zero behavior change). |
+| `games.rate-limit.bucket-idle-ms=300000` | UNREAD - hardcoded `BUCKET_IDLE_MS` constant. ACTION: WIRED via `Environment` into `bucketIdleMs` (same value). |
+| `games.rate-limit.trust-forwarded-for` | HALF-READ - RateLimitFilter.java:39 consulted only the JVM system-property (`-D`) form; the application.properties entry was inert (Spring never forwards custom properties to `System.getProperty`). ACTION: WIRED with precedence preserved: `-D` system property > Spring property (which expands the `GAMES_RATE_LIMIT_TRUST_XFF` env placeholder) > `false`. |
+
+Wiring proof: new `RateLimitFilterPropertiesTest` (3 tests) reflects the consumed values
+(`17`/`123456` from a MockEnvironment; `trustXFF=true` from the Spring property path with
+no `-D`; defaults `10000`/`300000`/`false` when absent). Existing rate-limit/CORS tests in
+`IdempotencyAndHardeningTest` (12 tests) pass unchanged; its 5 manual
+`new RateLimitFilter()` sites now pass `new MockEnvironment()`. Static constants
+`MAX_CACHE_ENTRIES`/`BUCKET_IDLE_MS` kept as defaults (IdempotencyAndHardeningTest reads
+them reflectively).
+
+### Task 3 - vacuous if-guarded assertion audit
+
+Scan: brace-aware parser over every `games-backend/src/test/**/*.java` finding `if` blocks
+whose body contains an assertion (13 hits; cross-checked against the suggested
+`if\s*\(.*\)\s*\{` grep - every additional hit there either has no assertion in its body or
+was verified FINE by reading context).
+
+| # | File:line | Class | Action |
+|---|---|---|---|
+| 1 | ActuatorHardeningTest.java:81 | FINE | none - counting loop; real asserts (created>0, limited>0) run unconditionally; :86 is the exhaustive else-error path |
+| 2 | GamesBackendIntegrationTest.java:904 | FINE | none - fail-fast guard (throws when playerToken missing); positive assertions run on the returned token later |
+| 3 | BlackjackSessionTest.java:156 | VACUOUS | `activeSession()` now rigs the existing deterministic no-blackjack `setupDeck`; guard removed, assertion unconditional |
+| 4 | BlackjackSessionTest.java:166 | VACUOUS | same `activeSession()` fix; guard removed |
+| 5 | BlackjackSessionTest.java:449 | VACUOUS | switched to deterministic `activeSession()`; guard removed |
+| 6 | AdversarialRoomTest.java:253 | FINE | none - both branches assert (race outcome may legitimately go either way) |
+| 7 | AdversarialRoomTest.java:498 | FINE | none - conditional invariant (mapping present -> room exists); complement asserted at :509-514; null mapping is legitimate absence |
+| 8 | MinesweeperSessionTest.java:173 | VACUOUS | see finding below - helper fixed; null branch (instant win) asserted, else-branch loss asserts now always execute |
+| 9 | MinesweeperSessionTest.java:185 | VACUOUS | same helper fix; loss branch now always executes (gameOver/won asserts + mine-reveal loop) |
+| 10 | MinesweeperSessionTest.java:188 | SAFE | none - inner `cell.mine()` filter over a 60-mine board: subset always non-empty once the (now reachable) outer branch runs |
+| 11 | MinesweeperSessionTest.java:210 | VACUOUS | same helper fix; safe-flag target now selected from the private `mines` BitSet (view hides mine status during play); null branch asserts instant win |
+| 12 | MinesweeperSessionTest.java:214 | VACUOUS | inner guard replaced by unconditional notNull/gameOver/won asserts; WRONG_FLAG assertion now always executes |
+| 13 | MinesweeperSessionTest.java:267 | VACUOUS | same helper fix; gameOver assert unconditional; null branch (instant win) asserts won preserved after extra open |
+
+Finding (root cause, stronger than expected): `MinesweeperCellView.mine` is
+`revealMines && mines.get(index)` with `revealMines = gameOver` (MinesweeperSession.snapshot)
+- the view hides mine status while the game is in progress. The old `forceOpenMine`
+helper scanned `cell.mine() && state == COVERED`, a predicate that is NEVER true (during
+play `mine()` is false; after loss mines are OPENED; after win FLAGGED). It therefore
+returned null on every run and the guarded assertions in rows 8, 9, 12, 13 had NEVER
+executed - those four tests were 100% vacuous in every prior run, including the Step 5a
+RED/GREEN runs. `forceOpenMine` now reads the private `mines` BitSet via reflection (the
+same test-side reflection fixture pattern as `BlackjackSessionTest.setupDeck`); row 11's
+safe-cell selection was similarly broken (view `!mine()` matched mine cells too) and now
+uses the BitSet. All four tests fail loudly if the loss/win branch is not reached.
+
+### Verification - 5b gates
+- `mvn test -pl games-backend` x3 (normal priority): all
+  `Tests run: 248, Failures: 0, Errors: 0, Skipped: 0` - BUILD SUCCESS
+  (raw: `%TEMP%\step5b\backend-5b-run-1.txt`, `-2`, `-3`).
+- `npm test`: `Test Files 8 passed (8)`, `Tests 87 passed (87)`
+  (raw: `%TEMP%\step5b\frontend-5b-run.txt`).
+- No new production dependencies (MockEnvironment/AopUtils are existing classpath).
+- No gameplay rule changes. No production code changed except the two Task 2 wiring
+  points in RateLimitFilter (values identical to previous hardcoded constants).
+- No `@Disable`, no weakened assertions; Task 3 strengthened every vacuous test.
+
+### Test count arithmetic - 5b
+244 (end of 5a) + 1 (CorsDriftGuardTest) + 3 (RateLimitFilterPropertiesTest) = **248**.
+Task 3 converted tests in place (no splits required): count unchanged.
+
+### Files touched in Step 5b (scope proof)
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/api/CorsDriftGuardTest.java` (new)
+- `games-backend/src/main/java/com/KIRA_ZINA/backend/config/RateLimitFilter.java`
+  (Task 2 wiring only: Environment constructor, instance fields, trustXFF fallback chain)
+- `games-backend/src/main/resources/application.properties` (Task 2: cors property removed)
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/api/IdempotencyAndHardeningTest.java`
+  (constructor call sites only)
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/config/RateLimitFilterPropertiesTest.java` (new)
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/blackjack/domain/BlackjackSessionTest.java`
+  (Task 3: activeSession fixture + 3 guard removals)
+- `games-backend/src/test/java/com/KIRA_ZINA/backend/minesweeper/domain/MinesweeperSessionTest.java`
+  (Task 3: forceOpenMine/BitSet fixture + 4 asserted-branch conversions)
+- `CHANGELOG.md` (this section)
