@@ -3,6 +3,7 @@ package com.KIRA_ZINA.backend.twentyfortyeight.service;
 import com.KIRA_ZINA.backend.twentyfortyeight.domain.Game2048Session;
 import com.KIRA_ZINA.backend.twentyfortyeight.domain.Game2048State;
 import com.KIRA_ZINA.backend.twentyfortyeight.domain.MoveDirection;
+import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -55,7 +56,7 @@ public class Game2048SessionService {
     private Game2048Session requireSession(String sessionId) {
         Game2048Session session = sessions.get(sessionId);
         if (session == null) {
-            throw new IllegalArgumentException("2048 session not found: " + sessionId);
+            throw new ResourceNotFoundException("2048 session not found: " + sessionId);
         }
         return session;
     }

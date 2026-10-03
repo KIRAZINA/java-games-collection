@@ -1,11 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Welcome } from './components/Welcome.jsx';
 import { RoomLobby } from './components/RoomLobby.jsx';
 import { Blackjack } from './components/Blackjack.jsx';
 import { Minesweeper } from './components/Minesweeper.jsx';
 import { Game2048 } from './components/Game2048.jsx';
 import { ConfirmNavigationModal } from './components/ConfirmNavigationModal.jsx';
-import { roomsApi } from './api/api.js';
+import { roomsApi, setRoomToken, clearRoomToken, rehydrateRoomTokens } from './api/api.js';
 
 const GAME_TYPE_MAP = {
   blackjack: 'BLACKJACK',
@@ -26,6 +26,11 @@ function App() {
   const [pendingNavigationTarget, setPendingNavigationTarget] = useState(null);
   const [playerId] = useMemo(() => `player-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, []);
   const [playerName, setPlayerName] = useState('');
+  const [lobbyNotice, setLobbyNotice] = useState('');
+
+  useEffect(() => {
+    rehydrateRoomTokens();
+  }, []);
 
   function handleSelectGame(game) {
     setActiveGame(game);
@@ -72,6 +77,7 @@ function App() {
       } catch {
         // Room may already be gone — proceed
       }
+      clearRoomToken(room.roomId);
     }
 
     setPage('lobby');
@@ -87,9 +93,19 @@ function App() {
     }
   }
 
+  function handleAuthLost(message) {
+    if (currentRoom) {
+      clearRoomToken(currentRoom.roomId);
+      setCurrentRoom(null);
+    }
+    setLobbyNotice(message);
+    setPage('lobby');
+  }
+
   function handleEnterGame(enteredRoomId, gameType) {
     setCurrentRoom({ roomId: enteredRoomId, gameType, playerId });
     setActiveGame(gameType);
+    setLobbyNotice('');
     setPage('game');
   }
 
@@ -103,10 +119,12 @@ function App() {
       try {
         await roomsApi.leaveRoom(currentRoom.roomId, currentRoom.playerId);
       } catch {}
+      clearRoomToken(currentRoom.roomId);
       setCurrentRoom(null);
     }
 
     setActiveGame(gameKey);
+    setLobbyNotice('');
     setPage('lobby');
 
     const defaults = DEFAULT_SETTINGS[gameKey];
@@ -130,6 +148,7 @@ function App() {
         playerId,
         playerName
       );
+      setRoomToken(summary.roomId, summary.playerToken);
       handleEnterGame(summary.roomId, gameKey);
     } catch {
       setPage('lobby');
@@ -143,7 +162,9 @@ function App() {
     } catch {
       // Room may already be gone — proceed
     }
+    clearRoomToken(currentRoom.roomId);
     setCurrentRoom(null);
+    setLobbyNotice('');
     setPage('lobby');
   }
 
@@ -151,8 +172,10 @@ function App() {
     setPage('welcome');
     setActiveGame(null);
     setCurrentRoom(null);
+    setLobbyNotice('');
     if (currentRoom) {
       roomsApi.leaveRoom(currentRoom.roomId, currentRoom.playerId).catch(() => {});
+      clearRoomToken(currentRoom.roomId);
     }
   }
 
@@ -217,6 +240,8 @@ function App() {
             playerName={playerName}
             onEnterGame={handleEnterGame}
             onQuickPlay={handleQuickPlay}
+            onAuthLost={handleAuthLost}
+            notice={lobbyNotice}
           />
         )}
         {page === 'game' && activeGame === 'blackjack' && (

@@ -2,24 +2,19 @@ package com.KIRA_ZINA.backend.minesweeper.api;
 
 import com.KIRA_ZINA.backend.minesweeper.domain.MinesweeperState;
 import com.KIRA_ZINA.backend.minesweeper.service.MinesweeperSessionService;
+import com.KIRA_ZINA.backend.common.idempotency.IdempotencyService;
 import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.ExceptionHandler;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.ResponseStatus;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/minesweeper/sessions")
 public class MinesweeperController {
     private final MinesweeperSessionService sessions;
+    private final IdempotencyService idempotencyService;
 
-    public MinesweeperController(MinesweeperSessionService sessions) {
+    public MinesweeperController(MinesweeperSessionService sessions, IdempotencyService idempotencyService) {
         this.sessions = sessions;
+        this.idempotencyService = idempotencyService;
     }
 
     @PostMapping
@@ -38,22 +33,76 @@ public class MinesweeperController {
     }
 
     @PostMapping("/{sessionId}/open")
-    public MinesweeperState open(@PathVariable("sessionId") String sessionId, @RequestBody CellActionRequest request) {
+    public MinesweeperState open(
+            @PathVariable("sessionId") String sessionId,
+            @RequestBody CellActionRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey) throws Exception {
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                MinesweeperState result = idempotencyService.execute("minesweeper:open", sessionId, idKey,
+                        () -> sessions.open(sessionId, request.row(), request.col()), r -> snapshot200(r));
+                return result;
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(replay.body, MinesweeperState.class);
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+        }
         return sessions.open(sessionId, request.row(), request.col());
     }
 
     @PostMapping("/{sessionId}/flag")
-    public MinesweeperState toggleFlag(@PathVariable("sessionId") String sessionId, @RequestBody CellActionRequest request) {
+    public MinesweeperState toggleFlag(
+            @PathVariable("sessionId") String sessionId,
+            @RequestBody CellActionRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey) throws Exception {
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                MinesweeperState result = idempotencyService.execute("minesweeper:flag", sessionId, idKey,
+                        () -> sessions.toggleFlag(sessionId, request.row(), request.col()), r -> snapshot200(r));
+                return result;
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(replay.body, MinesweeperState.class);
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+        }
         return sessions.toggleFlag(sessionId, request.row(), request.col());
     }
 
     @PostMapping("/{sessionId}/reset")
-    public MinesweeperState reset(@PathVariable("sessionId") String sessionId) {
+    public MinesweeperState reset(
+            @PathVariable("sessionId") String sessionId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey) throws Exception {
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                MinesweeperState result = idempotencyService.execute("minesweeper:reset", sessionId, idKey,
+                        () -> sessions.reset(sessionId), r -> snapshot200(r));
+                return result;
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(replay.body, MinesweeperState.class);
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+        }
         return sessions.reset(sessionId);
     }
 
     @PostMapping("/{sessionId}/next-board")
-    public MinesweeperState nextBoard(@PathVariable("sessionId") String sessionId) {
+    public MinesweeperState nextBoard(
+            @PathVariable("sessionId") String sessionId,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey) throws Exception {
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                MinesweeperState result = idempotencyService.execute("minesweeper:next-board", sessionId, idKey,
+                        () -> sessions.nextBoard(sessionId), r -> snapshot200(r));
+                return result;
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(replay.body, MinesweeperState.class);
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+        }
         return sessions.nextBoard(sessionId);
     }
 
@@ -63,9 +112,15 @@ public class MinesweeperController {
         sessions.closeSession(sessionId);
     }
 
-    public record CreateSessionRequest(Integer rows, Integer cols, Integer mines) {
+    private static IdempotencyService.CachedResponseSnapshot snapshot200(Object value) {
+        try {
+            return new IdempotencyService.CachedResponseSnapshot(200,
+                    new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize idempotent response", e);
+        }
     }
 
-    public record CellActionRequest(int row, int col) {
-    }
+    public record CreateSessionRequest(Integer rows, Integer cols, Integer mines) {}
+    public record CellActionRequest(int row, int col) {}
 }

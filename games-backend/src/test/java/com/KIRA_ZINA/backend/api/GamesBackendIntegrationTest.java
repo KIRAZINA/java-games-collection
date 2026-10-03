@@ -96,11 +96,12 @@ class GamesBackendIntegrationTest {
         }
 
         @Test
-        @DisplayName("GET /nonexistent → 400 BAD REQUEST (session not found)")
-        void getBlackjackSession_400_missing() throws Exception {
+        @DisplayName("GET /nonexistent → 404 NOT FOUND (resource not found)")
+        void getBlackjackSession_404_missing() throws Exception {
             mockMvc.perform(get("/api/blackjack/sessions/nonexistent-session-id"))
-                    .andExpect(status().isBadRequest())
-                    .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("not found")));
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.error").value(org.hamcrest.Matchers.containsString("not found")))
+                    .andExpect(jsonPath("$.status").value(404));
         }
 
         @Test
@@ -445,9 +446,9 @@ class GamesBackendIntegrationTest {
             // Trigger the cleanup
             blackjackSessionService.evictInactiveSessions();
 
-            // Session should now be gone → GET returns 400
+            // Session should now be gone → GET returns 404
             mockMvc.perform(get("/api/blackjack/sessions/{id}", sessionId))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isNotFound());
         }
     }
 
@@ -562,6 +563,7 @@ class GamesBackendIntegrationTest {
             // Owner leaves — room has 0 players and gets removed immediately
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(created))
                             .content("""
                                     {
                                         "playerId":"owner6"
@@ -570,7 +572,7 @@ class GamesBackendIntegrationTest {
 
             // Room should be gone
             mockMvc.perform(get("/api/rooms/{roomId}", roomId))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isNotFound());
         }
 
         @Test
@@ -592,7 +594,7 @@ class GamesBackendIntegrationTest {
             String roomId = roomSessionId(created);
 
             // Join
-            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+            MvcResult joined = mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {
@@ -600,7 +602,8 @@ class GamesBackendIntegrationTest {
                                         "playerName":"Heidi"
                                     }"""))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.playerCount").value(2));
+                    .andExpect(jsonPath("$.playerCount").value(2))
+                    .andReturn();
 
             // Get — confirm room exists with 2 players
             mockMvc.perform(get("/api/rooms/{roomId}", roomId))
@@ -610,6 +613,7 @@ class GamesBackendIntegrationTest {
             // Join player leaves — 1 remaining
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(joined))
                             .content("""
                                     {
                                         "playerId":"lifecycle-player"
@@ -624,6 +628,7 @@ class GamesBackendIntegrationTest {
             // Owner leaves — room removed
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(created))
                             .content("""
                                     {
                                         "playerId":"lifecycle-owner"
@@ -631,7 +636,7 @@ class GamesBackendIntegrationTest {
                     .andExpect(status().isNoContent());
 
             mockMvc.perform(get("/api/rooms/{roomId}", roomId))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isNotFound());
         }
     }
 
@@ -672,7 +677,7 @@ class GamesBackendIntegrationTest {
             String roomId = roomSessionId(created);
 
             // Player 2 joins
-            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+            MvcResult joined2 = mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {
@@ -680,7 +685,8 @@ class GamesBackendIntegrationTest {
                                         "playerName": "Bob"
                                     }"""))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.playerCount").value(2));
+                    .andExpect(jsonPath("$.playerCount").value(2))
+                    .andReturn();
 
             // GET room confirms both players
             mockMvc.perform(get("/api/rooms/{roomId}", roomId))
@@ -700,6 +706,7 @@ class GamesBackendIntegrationTest {
             // Player 2 leaves
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(joined2))
                             .content("""
                                     {
                                         "playerId": "multi-joiner"
@@ -714,6 +721,7 @@ class GamesBackendIntegrationTest {
             // Owner leaves → room removed
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(created))
                             .content("""
                                     {
                                         "playerId": "multi-owner"
@@ -722,7 +730,7 @@ class GamesBackendIntegrationTest {
 
             // Room is gone
             mockMvc.perform(get("/api/rooms/{roomId}", roomId))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isNotFound());
         }
 
         @Test
@@ -763,6 +771,7 @@ class GamesBackendIntegrationTest {
             // Player 1 registers session with room
             mockMvc.perform(post("/api/rooms/{roomId}/sessions", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(roomCreated))
                             .content("""
                                     {
                                         "playerId": "interact-owner",
@@ -771,7 +780,7 @@ class GamesBackendIntegrationTest {
                     .andExpect(status().isCreated());
 
             // Player 2 joins
-            mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
+            MvcResult joined = mockMvc.perform(post("/api/rooms/{roomId}/join", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content("""
                                     {
@@ -779,7 +788,8 @@ class GamesBackendIntegrationTest {
                                         "playerName": "Bob"
                                     }"""))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.playerCount").value(2));
+                    .andExpect(jsonPath("$.playerCount").value(2))
+                    .andReturn();
 
             // Player 2 creates and registers their session
             MvcResult session2Created = mockMvc.perform(post("/api/minesweeper/sessions")
@@ -791,6 +801,7 @@ class GamesBackendIntegrationTest {
 
             mockMvc.perform(post("/api/rooms/{roomId}/sessions", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(joined))
                             .content("""
                                     {
                                         "playerId": "interact-joiner",
@@ -814,6 +825,7 @@ class GamesBackendIntegrationTest {
             // Cleanup: leave players in reverse order, delete sessions
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(joined))
                             .content("""
                                     {
                                         "playerId": "interact-joiner"
@@ -822,6 +834,7 @@ class GamesBackendIntegrationTest {
 
             mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
                             .contentType(MediaType.APPLICATION_JSON)
+                            .header("X-Player-Token", playerToken(roomCreated))
                             .content("""
                                     {
                                         "playerId": "interact-owner"
@@ -856,6 +869,12 @@ class GamesBackendIntegrationTest {
             @SuppressWarnings("unchecked")
             Map<String, ?> roomPlayerSessions = (Map<String, ?>) roomPlayerSessionsField.get(gameRoomService);
             roomPlayerSessions.clear();
+
+            Field playerTokensField = GameRoomService.class.getDeclaredField("playerTokens");
+            playerTokensField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            Map<String, ?> playerTokens = (Map<String, ?>) playerTokensField.get(gameRoomService);
+            playerTokens.clear();
         }
     }
 
@@ -877,6 +896,15 @@ class GamesBackendIntegrationTest {
     private String roomSessionId(MvcResult result) throws Exception {
         JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
         return json.get("roomId").asText();
+    }
+
+    private String playerToken(MvcResult result) throws Exception {
+        JsonNode json = objectMapper.readTree(result.getResponse().getContentAsString());
+        JsonNode token = json.get("playerToken");
+        if (token == null || token.isNull()) {
+            throw new AssertionError("Response has no playerToken: " + result.getResponse().getContentAsString());
+        }
+        return token.asText();
     }
 
     @SuppressWarnings("unchecked")

@@ -48,8 +48,10 @@ Pure domain layer with no framework coupling — domain classes (`BlackjackSessi
 - Server-authoritative: all game logic runs on the backend; frontend sends intents only
 - No database: all state lives in memory (suitable for ephemeral game sessions)
 - Room auto-cleanup: empty rooms removed immediately; TTL-based eviction runs every 60s
-- Rate limiting: bucket4j per-IP (60 tokens, 10 refill/10s); GET requests exempt
-- Phase enforcement: Blackjack `placeBet`/`hit`/`stand` guarded by `IllegalStateException` → 409 Conflict
+- Rate limiting: bucket4j per-IP (200 tokens, 30 refill/10s, max 10_000 buckets, LRU eviction after 5min idle); GET requests exempt; `X-Forwarded-For` trusted only when `GAMES_RATE_LIMIT_TRUST_XFF=true`
+- CORS: exact-match allow-list from `GAMES_CORS_ALLOWED_ORIGINS` (defaults: `http://localhost:5173`, `http://localhost:3000`); no `contains()`; disallowed origins receive 403 on preflight; preflight `Access-Control-Allow-Headers` = `Authorization, Content-Type, Origin, Accept, X-Requested-With, Idempotency-Key, X-Player-Token, X-Request-Id`
+- Idempotency: optional `Idempotency-Key` header on mutating POST endpoints; same key returns cached response within 10 minutes
+- Resource errors return 404 (`ResourceNotFoundException`); bad input 400; phase conflicts 409
 
 ### Frontend (games-frontend)
 
@@ -109,6 +111,20 @@ cd games-backend && mvn test
 cd games-frontend && npm test
 ```
 
+### Smoke Test
+
+End-to-end API smoke script (16 steps) against a running backend:
+
+```bash
+# start the backend first (mvn spring-boot:run), then:
+bash scripts/smoke.sh                                  # http://localhost:8080
+BASE_URL=https://api.example.com bash scripts/smoke.sh # remote deployment
+```
+
+On success it prints `SMOKE OK` and exits 0. On the first failed step it
+prints the step number, script line, expected vs actual status and the
+response body, then exits non-zero.
+
 ## Docker
 
 ```bash
@@ -120,6 +136,28 @@ Access at `http://localhost:80`
 ## In-Memory State (Deployment Note)
 
 This is an in-memory demo application. All active games, rooms, and player balances are stored in `ConcurrentHashMap` and will be reset whenever the service restarts or goes to sleep after 15 minutes of inactivity (Render Free Tier behavior). No database is used.
+
+## Proxy Contract (Deployment)
+
+Deployed behind a TLS-terminating proxy (e.g. Render), the app relies on
+`server.forward-headers-strategy=framework` (configured) and expects the proxy
+to set and forward these headers — **do not strip them**:
+
+| Header | Set by | Effect |
+|--------|--------|--------|
+| `X-Forwarded-Proto` | proxy | Original client scheme (`https`/`http`); drives scheme-aware logic and the optional `GAMES_REQUIRE_HTTPS` enforcement |
+| `X-Forwarded-For` | proxy | Client IP chain; used for rate limiting only when `GAMES_RATE_LIMIT_TRUST_XFF=true` (rightmost hop) |
+| `X-Forwarded-Host` | proxy | Original host used for URL/redirect resolution |
+| `X-Request-Id` | client/proxy (optional) | Correlation id: echoed back on the response and injected into every log line via MDC (`requestId`); generated when absent |
+
+Operational notes:
+
+- **HTTP→HTTPS redirect** must be performed by the proxy; the app never redirects.
+- **HSTS** must be sent by the proxy; the app never sends `Strict-Transport-Security`.
+- **Optional enforcement**: set `GAMES_REQUIRE_HTTPS=true` and requests arriving
+  without `X-Forwarded-Proto: https` get `400 {"error":"HTTPS required","status":400}`.
+  Default is `false` (plain-http local development).
+- `/actuator/health` is exempt from rate limiting so probes never see `429`.
 
 ## API Overview
 

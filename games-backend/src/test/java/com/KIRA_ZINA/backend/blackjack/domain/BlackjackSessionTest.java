@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -86,11 +85,18 @@ class BlackjackSessionTest {
         void validBetDeductsBalance() {
             BlackjackSession session = session(100.0);
             session.startRound();
+            // Deterministic deck: no blackjack on either side -> round stays in PLAYER_TURN
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.FIVE),    // player card 1
+                    new Card(Suit.CLUBS, Rank.NINE),      // player card 2 → 14
+                    new Card(Suit.DIAMONDS, Rank.SIX),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.EIGHT));   // dealer card 2 → 14
             BlackjackState state = session.placeBet(10.0);
 
-            // Balance deducted (90 during play, or restored if settled immediately)
-            assertThat(state.balance()).isIn(90.0, 100.0, 110.0, 115.0);
-            assertThat(state.currentBet()).isIn(0.0, 10.0);
+            // Balance deducted: 100 - 10 = 90, bet still in play
+            assertThat(state.balance()).isEqualTo(90.0);
+            assertThat(state.currentBet()).isEqualTo(10.0);
+            assertThat(state.phase()).isEqualTo(RoundPhase.PLAYER_TURN);
             // Player dealt 2 cards; dealer shows at least 1 (hidden until stand)
             assertThat(state.playerCards()).hasSize(2);
             assertThat(state.dealerCards()).hasSizeBetween(1, 2);
@@ -187,68 +193,70 @@ class BlackjackSessionTest {
         @Test
         @DisplayName("player wins normally: balance increases by 2x bet")
         void playerWinsNormallyGets2xBet() {
-            // Run many rounds to get a natural player-wins result
-            // We can verify the math by tracking balance
+            // Deterministic deck: player 18 vs dealer 17 → non-blackjack PLAYER win at 2x payout.
+            // (Random-deck version was flaky: a natural player win pays 2.5x = 115, not 110.)
             BlackjackSession session = session(100.0);
             session.startRound();
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.NINE),     // player card 1
+                    new Card(Suit.CLUBS, Rank.NINE),      // player card 2 → 18
+                    new Card(Suit.DIAMONDS, Rank.TEN),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.SEVEN));   // dealer card 2 → 17
             BlackjackState afterBet = session.placeBet(10.0);
-            // If not over yet, player stands
-            BlackjackState settled = afterBet.phase() == RoundPhase.ROUND_OVER
-                    ? afterBet : session.stand();
+            // No natural on either side → round stays in PLAYER_TURN
+            assertThat(afterBet.phase()).isEqualTo(RoundPhase.PLAYER_TURN);
+            BlackjackState settled = session.stand();
 
             assertThat(settled.phase()).isEqualTo(RoundPhase.ROUND_OVER);
-            assertThat(settled.winner()).isIn(RoundWinner.PLAYER, RoundWinner.DEALER, RoundWinner.TIE);
+            assertThat(settled.winner()).isEqualTo(RoundWinner.PLAYER);
             assertThat(settled.currentBet()).isZero();
             assertThat(settled.dealerValue()).isNotNull();
 
-            // Balance math: started 100, bet 10, so balance was 90 during play
-            // If PLAYER win: 90 + 20 = 110
-            // If TIE: 90 + 10 = 100
-            // If DEALER: 90 (no refund)
-            switch (settled.winner()) {
-                case PLAYER -> assertThat(settled.balance()).isEqualTo(110.0);
-                case TIE -> assertThat(settled.balance()).isEqualTo(100.0);
-                case DEALER -> assertThat(settled.balance()).isEqualTo(90.0);
-                default -> {}
-            }
+            // Balance math: started 100, bet 10 → 90 during play, PLAYER win pays 2x → 90 + 20 = 110
+            assertThat(settled.balance()).isEqualTo(110.0);
         }
 
         @Test
         @DisplayName("blackjack payout is 2.5x bet when player has natural 21")
-        void playerBlackjackPays2_5x() {
-            // Verify the payout constant via the settleRound formula directly.
-            // We test by checking the formula: if player BJ and dealer no BJ →
-            // balance = (balance - bet) + bet * 2.5
-            // Starting 100, bet 10 → balance during play = 90, win → 90 + 25 = 115
-            // We use a repeated run approach: run until a blackjack state is observed,
-            // or directly verify the code logic via a controlled scenario.
-            // Since deck is random, we verify via the settleRound state contract.
+        void playerBlackjackWinsPays2_5x() {
+            // Deterministic deck: player natural (Ace+King) vs dealer 14 → immediate PLAYER win at 2.5x.
+            // (Replaces the old random-deck playerBlackjackPays2_5x, which only asserted inside an
+            //  if-branch that a natural PLAYER win occurred — vacuous on ~95% of runs.)
             BlackjackSession session = session(100.0);
             session.startRound();
-            BlackjackState afterBet = session.placeBet(10.0);
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.ACE),      // player card 1
+                    new Card(Suit.CLUBS, Rank.KING),      // player card 2 → blackjack
+                    new Card(Suit.DIAMONDS, Rank.FIVE),   // dealer card 1
+                    new Card(Suit.SPADES, Rank.NINE));    // dealer card 2 → 14, no blackjack
+            BlackjackState settled = session.placeBet(10.0);
 
-            if (afterBet.phase() == RoundPhase.ROUND_OVER && afterBet.winner() == RoundWinner.PLAYER) {
-                // Could be blackjack payout (115) or normal win after natural (impossible in 2-card stand)
-                // If it settled immediately with PLAYER win, it means player blackjack
-                if (afterBet.playerCards().size() == 2 && afterBet.playerValue() == 21) {
-                    assertThat(afterBet.balance()).isEqualTo(115.0); // 90 + 10*2.5
-                }
-            }
+            assertThat(settled.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(settled.winner()).isEqualTo(RoundWinner.PLAYER);
+            // Balance math: started 100, bet 10 → 90 during play, BJ pays 2.5x → 90 + 25 = 115
+            assertThat(settled.balance()).isEqualTo(115.0);
+            assertThat(settled.currentBet()).isZero();
         }
 
         @Test
         @DisplayName("tie returns bet to player: balance stays equal to pre-bet balance")
         void tiePayout() {
-            // Full round: bet 10, start with 100 → if TIE → balance = 100
+            // Deterministic deck: both stand on 17 → played-out tie → bet refunded.
+            // (Random-deck version only asserted when a TIE happened to occur — vacuous on
+            //  most runs; the TIE→100.0 value was correct whenever reached, but unpinned.)
             BlackjackSession session = session(100.0);
             session.startRound();
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.TEN),      // player card 1
+                    new Card(Suit.CLUBS, Rank.SEVEN),     // player card 2 → 17
+                    new Card(Suit.DIAMONDS, Rank.TEN),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.SEVEN));   // dealer card 2 → 17
             BlackjackState afterBet = session.placeBet(10.0);
-            BlackjackState settled = afterBet.phase() == RoundPhase.ROUND_OVER
-                    ? afterBet : session.stand();
+            assertThat(afterBet.phase()).isEqualTo(RoundPhase.PLAYER_TURN);
+            BlackjackState settled = session.stand();
 
-            if (settled.winner() == RoundWinner.TIE) {
-                assertThat(settled.balance()).isEqualTo(100.0);
-            }
+            assertThat(settled.winner()).isEqualTo(RoundWinner.TIE);
+            assertThat(settled.balance()).isEqualTo(100.0);
         }
 
         @Test
@@ -359,32 +367,76 @@ class BlackjackSessionTest {
     @DisplayName("Full Round Lifecycle")
     class FullRound {
 
-        @RepeatedTest(5)
-        @DisplayName("round can be started, bet placed, and settled (repeated for randomness)")
-        void roundCanBeStartedBetAndSettled() {
+        @Test
+        @DisplayName("dealer blackjack settles immediately: balance 90.0 (bet lost)")
+        void dealerBlackjackSettlesAtPlaceBet() {
             BlackjackSession session = session(100.0);
-
             BlackjackState initial = session.startRound();
             assertThat(initial.phase()).isEqualTo(RoundPhase.BETTING);
             assertThat(initial.balance()).isEqualTo(100.0);
 
-            BlackjackState afterBet = session.placeBet(10.0);
-            if (afterBet.phase() == RoundPhase.PLAYER_TURN) {
-                assertThat(afterBet.balance()).isEqualTo(90.0);
-            } else {
-                assertThat(afterBet.balance()).isIn(100.0, 115.0);
-            }
-            assertThat(afterBet.playerCards()).hasSize(2);
-            assertThat(afterBet.dealerCards()).hasSizeBetween(1, 2);
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.FIVE),    // player card 1
+                    new Card(Suit.CLUBS, Rank.NINE),      // player card 2 → 14
+                    new Card(Suit.DIAMONDS, Rank.ACE),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.KING));    // dealer card 2 → blackjack
 
-            BlackjackState settled = afterBet.phase() == RoundPhase.ROUND_OVER
-                    ? afterBet : session.stand();
+            BlackjackState settled = session.placeBet(10.0);
             assertThat(settled.phase()).isEqualTo(RoundPhase.ROUND_OVER);
-            assertThat(settled.winner()).isIn(RoundWinner.PLAYER, RoundWinner.DEALER, RoundWinner.TIE);
+            assertThat(settled.winner()).isEqualTo(RoundWinner.DEALER);
+            assertThat(settled.balance()).isEqualTo(90.0);
             assertThat(settled.currentBet()).isZero();
-            assertThat(settled.dealerValue()).isNotNull();
-            // Dealer hand fully revealed
-            assertThat(settled.dealerCards()).hasSizeGreaterThanOrEqualTo(2);
+            assertThat(settled.playerCards()).hasSize(2);
+            assertThat(settled.dealerCards()).hasSize(2);
+            assertThat(settled.dealerValue()).isEqualTo(21);
+        }
+
+        @Test
+        @DisplayName("both blackjack settles immediately: balance 100.0 (bet returned)")
+        void bothBlackjackSettlesAtPlaceBet() {
+            BlackjackSession session = session(100.0);
+            BlackjackState initial = session.startRound();
+            assertThat(initial.phase()).isEqualTo(RoundPhase.BETTING);
+            assertThat(initial.balance()).isEqualTo(100.0);
+
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.ACE),      // player card 1
+                    new Card(Suit.CLUBS, Rank.KING),      // player card 2 → blackjack
+                    new Card(Suit.DIAMONDS, Rank.ACE),    // dealer card 1
+                    new Card(Suit.SPADES, Rank.KING));    // dealer card 2 → blackjack
+
+            BlackjackState settled = session.placeBet(10.0);
+            assertThat(settled.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(settled.winner()).isEqualTo(RoundWinner.TIE);
+            assertThat(settled.balance()).isEqualTo(100.0);
+            assertThat(settled.currentBet()).isZero();
+            assertThat(settled.playerCards()).hasSize(2);
+            assertThat(settled.dealerCards()).hasSize(2);
+            assertThat(settled.dealerValue()).isEqualTo(21);
+        }
+
+        @Test
+        @DisplayName("player blackjack settles immediately: balance 115.0 (2.5x payout)")
+        void playerBlackjackSettlesAtPlaceBet() {
+            BlackjackSession session = session(100.0);
+            BlackjackState initial = session.startRound();
+            assertThat(initial.phase()).isEqualTo(RoundPhase.BETTING);
+            assertThat(initial.balance()).isEqualTo(100.0);
+
+            setupDeck(session,
+                    new Card(Suit.HEARTS, Rank.ACE),      // player card 1
+                    new Card(Suit.CLUBS, Rank.KING),      // player card 2 → blackjack
+                    new Card(Suit.DIAMONDS, Rank.FIVE),   // dealer card 1
+                    new Card(Suit.SPADES, Rank.NINE));    // dealer card 2 → 14, no blackjack
+
+            BlackjackState settled = session.placeBet(10.0);
+            assertThat(settled.phase()).isEqualTo(RoundPhase.ROUND_OVER);
+            assertThat(settled.winner()).isEqualTo(RoundWinner.PLAYER);
+            assertThat(settled.balance()).isEqualTo(115.0);
+            assertThat(settled.currentBet()).isZero();
+            assertThat(settled.playerCards()).hasSize(2);
+            assertThat(settled.dealerCards()).hasSize(2);
+            assertThat(settled.dealerValue()).isEqualTo(14);
         }
 
         @Test

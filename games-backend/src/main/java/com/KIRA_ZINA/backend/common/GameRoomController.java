@@ -1,5 +1,7 @@
 package com.KIRA_ZINA.backend.common;
 
+import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
+import com.KIRA_ZINA.backend.common.idempotency.IdempotencyService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -9,9 +11,11 @@ import java.util.List;
 @RequestMapping("/api/rooms")
 public class GameRoomController {
     private final GameRoomService roomService;
+    private final IdempotencyService idempotencyService;
 
-    public GameRoomController(GameRoomService roomService) {
+    public GameRoomController(GameRoomService roomService, IdempotencyService idempotencyService) {
         this.roomService = roomService;
+        this.idempotencyService = idempotencyService;
     }
 
     @GetMapping
@@ -28,29 +32,69 @@ public class GameRoomController {
     @ResponseStatus(HttpStatus.CREATED)
     public GameRoom.RoomSummary createRoom(@RequestBody CreateRoomRequest request) {
         GameSettings settings = request.settings() != null ? request.settings() : GameSettings.defaultFor(request.gameType());
-        return roomService.createRoom(request.roomName(), settings, request.ownerId(), request.ownerName());
+        GameRoom.RoomSummary summary = roomService.createRoom(request.roomName(), settings, request.ownerId(), request.ownerName());
+        return summary.withPlayerToken(roomService.issuePlayerToken(summary.roomId(), request.ownerId()));
     }
 
     @GetMapping("/{roomId}")
     public GameRoom.RoomSummary getRoom(@PathVariable("roomId") String roomId) {
         return roomService.getRoom(roomId)
                 .map(GameRoom.RoomSummary::from)
-                .orElseThrow(() -> new IllegalArgumentException("Room not found: " + roomId));
+                .orElseThrow(() -> new ResourceNotFoundException("Room not found: " + roomId));
     }
 
     @PostMapping("/{roomId}/join")
-    public GameRoom.RoomSummary joinRoom(@PathVariable("roomId") String roomId, @RequestBody JoinRoomRequest request) {
-        return roomService.joinRoom(roomId, request.playerId(), request.playerName(), request.password());
+    public GameRoom.RoomSummary joinRoom(
+            @PathVariable("roomId") String roomId,
+            @RequestBody JoinRoomRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey) throws Exception {
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                GameRoom.RoomSummary result = idempotencyService.execute("rooms:join", roomId + ":" + request.playerId(), idKey,
+                        () -> {
+                            GameRoom.RoomSummary summary = roomService.joinRoom(roomId, request.playerId(), request.playerName(), request.password());
+                            return summary.withPlayerToken(roomService.issuePlayerToken(roomId, request.playerId()));
+                        },
+                        r -> snapshot200(r));
+                return result;
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(replay.body, GameRoom.RoomSummary.class);
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+        }
+        GameRoom.RoomSummary summary = roomService.joinRoom(roomId, request.playerId(), request.playerName(), request.password());
+        return summary.withPlayerToken(roomService.issuePlayerToken(roomId, request.playerId()));
     }
 
     @PostMapping("/{roomId}/spectate")
     public GameRoom.RoomSummary joinAsSpectator(@PathVariable("roomId") String roomId, @RequestBody SpectateRequest request) {
-        return roomService.joinAsSpectator(roomId, request.spectatorId(), request.spectatorName());
+        GameRoom.RoomSummary summary = roomService.joinAsSpectator(roomId, request.spectatorId(), request.spectatorName());
+        return summary.withPlayerToken(roomService.issuePlayerToken(roomId, request.spectatorId()));
     }
 
     @DeleteMapping("/{roomId}/leave")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void leaveRoom(@PathVariable("roomId") String roomId, @RequestBody LeaveRequest request) {
+    public void leaveRoom(
+            @PathVariable("roomId") String roomId,
+            @RequestBody LeaveRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey,
+            @RequestHeader(value = "X-Player-Token", required = false) String playerToken) throws Exception {
+        roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                idempotencyService.execute("rooms:leave", roomId + ":" + request.playerId(), idKey, () -> {
+                    roomService.leaveRoom(request.playerId());
+                    return null;
+                }, r -> new IdempotencyService.CachedResponseSnapshot(204, ""));
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                // replay no-op for 204
+                return;
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+            return;
+        }
         roomService.leaveRoom(request.playerId());
     }
 
@@ -62,12 +106,19 @@ public class GameRoomController {
 
     @DeleteMapping("/{roomId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void deleteRoom(@PathVariable("roomId") String roomId, @RequestBody DeleteRoomRequest request) {
+    public void deleteRoom(
+            @PathVariable("roomId") String roomId,
+            @RequestBody DeleteRoomRequest request,
+            @RequestHeader(value = "X-Player-Token", required = false) String playerToken) {
+        roomService.verifyPlayerToken(roomId, request.requesterId(), playerToken);
         roomService.deleteRoom(roomId, request.requesterId());
     }
 
     @GetMapping("/player/{playerId}")
-    public List<GameRoom.RoomSummary> getRoomsForPlayer(@PathVariable("playerId") String playerId) {
+    public List<GameRoom.RoomSummary> getRoomsForPlayer(
+            @PathVariable("playerId") String playerId,
+            @RequestHeader(value = "X-Player-Token", required = false) String playerToken) {
+        roomService.verifyPlayerTokenForPlayer(playerId, playerToken);
         return roomService.getRoomsForPlayer(playerId);
     }
 
@@ -83,14 +134,45 @@ public class GameRoomController {
 
     @PostMapping("/{roomId}/sessions")
     @ResponseStatus(HttpStatus.CREATED)
-    public void registerSession(@PathVariable("roomId") String roomId, @RequestBody RegisterSessionRequest request) {
+    public void registerSession(
+            @PathVariable("roomId") String roomId,
+            @RequestBody RegisterSessionRequest request,
+            @RequestHeader(value = "X-Player-Token", required = false) String playerToken) {
+        roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
         roomService.registerPlayerSession(roomId, request.playerId(), request.sessionId());
     }
 
     @PostMapping("/{roomId}/ready")
     @ResponseStatus(HttpStatus.OK)
-    public void markReady(@PathVariable("roomId") String roomId, @RequestBody MarkReadyRequest request) {
+    public void markReady(
+            @PathVariable("roomId") String roomId,
+            @RequestBody MarkReadyRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idKey,
+            @RequestHeader(value = "X-Player-Token", required = false) String playerToken) throws Exception {
+        roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
+        if (idKey != null && !idKey.isEmpty()) {
+            try {
+                idempotencyService.execute("rooms:ready", roomId + ":" + request.playerId(), idKey, () -> {
+                    roomService.markPlayerReady(roomId, request.playerId());
+                    return null;
+                }, r -> new IdempotencyService.CachedResponseSnapshot(200, ""));
+            } catch (IdempotencyService.IdempotencyReplayException replay) {
+                return;
+            } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
+                throw new IllegalStateException("Duplicate request in progress");
+            }
+            return;
+        }
         roomService.markPlayerReady(roomId, request.playerId());
+    }
+
+    private static IdempotencyService.CachedResponseSnapshot snapshot200(Object value) {
+        try {
+            return new IdempotencyService.CachedResponseSnapshot(200,
+                    new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value));
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to serialize idempotent response", e);
+        }
     }
 
     public record CreateRoomRequest(

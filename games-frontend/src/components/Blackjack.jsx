@@ -50,11 +50,14 @@ function formatMoney(value) {
   return Number(value ?? 0).toFixed(2);
 }
 
+const MAX_POLL_FAILURES = 3;
+
 export function Blackjack({ roomId, playerId, playerName, onExit }) {
   const [state, setState] = useState(null);
   const [difficulty, setDifficulty] = useState('BASIC');
   const [bet, setBet] = useState(10);
   const [error, setError] = useState('');
+  const [pollError, setPollError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opponents, setOpponents] = useState([]);
   const [roomPhase, setRoomPhase] = useState('LOBBY');
@@ -63,6 +66,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
   const registeredRef = useRef(false);
   const intervalRef = useRef(null);
   const prevBalanceRef = useRef(null);
+  const pollFailuresRef = useRef(0);
 
   const run = useCallback(async (action) => {
     setBusy(true);
@@ -94,25 +98,59 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
   useEffect(() => {
     if (!roomId) return;
 
-    const stateInterval = setInterval(async () => {
+    let cancelled = false;
+    let stopped = false;
+    let stateInterval;
+    let progressInterval;
+    pollFailuresRef.current = 0;
+    setPollError('');
+
+    const stopPolling = () => {
+      stopped = true;
+      clearInterval(stateInterval);
+      clearInterval(progressInterval);
+    };
+
+    const onPollFailure = (err) => {
+      if (cancelled || stopped) return;
+      if (err?.status === 404) {
+        setPollError('Room no longer exists. It may have been closed or deleted.');
+        stopPolling();
+        return;
+      }
+      pollFailuresRef.current += 1;
+      if (pollFailuresRef.current >= MAX_POLL_FAILURES) {
+        setPollError('Lost connection to the room. Please exit and try again.');
+        stopPolling();
+      }
+    };
+
+    stateInterval = setInterval(async () => {
       try {
         const roomState = await roomsApi.getRoomState(roomId);
+        if (cancelled || stopped) return;
+        pollFailuresRef.current = 0;
         setRoomPhase(roomState.roomPhase);
-      } catch {}
+      } catch (err) {
+        onPollFailure(err);
+      }
     }, 1000);
 
-    const progressInterval = setInterval(async () => {
+    progressInterval = setInterval(async () => {
       try {
         const progress = await roomsApi.getRoomProgress(roomId);
+        if (cancelled || stopped) return;
+        pollFailuresRef.current = 0;
         if (progress.roomPhase) setRoomPhase(progress.roomPhase);
         const others = (progress.players ?? []).filter((p) => p.playerId !== playerId);
         setOpponents(others);
-      } catch {
-        // polling error — ignore
+      } catch (err) {
+        onPollFailure(err);
       }
     }, 2000);
 
     return () => {
+      cancelled = true;
       clearInterval(stateInterval);
       clearInterval(progressInterval);
     };
@@ -188,6 +226,24 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
     run(() => blackjackApi.startRound(sessionId));
   }, [sessionId, run]);
 
+  if (roomId && pollError) {
+    return (
+      <div className="game-layout">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <GameHeader title="Blackjack" meta="Disconnected" />
+          {onExit && (
+            <button onClick={onExit} style={{ minHeight: 36, padding: '0 12px' }}>Exit Room</button>
+          )}
+        </div>
+        <div className="ready-check-overlay">
+          <div className="ready-check-card">
+            <p className="error-line" role="alert">{pollError}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (roomId && (roomPhase === 'LOBBY' || roomPhase === 'READY_CHECK')) {
     return (
       <div className="game-layout">
@@ -262,6 +318,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
       </div>
 
       {error && <p className="error-line" role="alert">{error}</p>}
+      {pollError && <p className="error-line" role="alert">{pollError}</p>}
 
       <div className="blackjack-table">
         <HandPanel title="Dealer" cards={state?.dealerCards ?? []} value={state?.dealerValue ?? '\u00A0?\u00A0'} isDealer={true} phase={state?.phase} />

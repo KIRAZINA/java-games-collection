@@ -2,6 +2,7 @@ package com.KIRA_ZINA.backend.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -93,10 +94,10 @@ class GameRoomServiceTest {
         }
 
         @Test
-        @DisplayName("joinRoom with wrong roomId throws")
+        @DisplayName("joinRoomNonExistentThrowsResourceNotFoundException")
         void joinRoomNonExistentThrows() {
             assertThatThrownBy(() -> roomService.joinRoom("no-such-room", "p1", "X", null))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(ResourceNotFoundException.class)
                     .hasMessageContaining("not found");
         }
     }

@@ -3,6 +3,7 @@ package com.KIRA_ZINA.backend.blackjack.service;
 import com.KIRA_ZINA.backend.blackjack.domain.BlackjackSession;
 import com.KIRA_ZINA.backend.blackjack.domain.BlackjackState;
 import com.KIRA_ZINA.backend.blackjack.domain.DealerDifficulty;
+import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -65,7 +66,7 @@ public class BlackjackSessionService {
     private BlackjackSession requireSession(String sessionId) {
         BlackjackSession session = sessions.get(sessionId);
         if (session == null) {
-            throw new IllegalArgumentException("Blackjack session not found: " + sessionId);
+            throw new ResourceNotFoundException("Blackjack session not found: " + sessionId);
         }
         return session;
     }

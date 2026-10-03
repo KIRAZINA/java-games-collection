@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { roomsApi } from '../api/api.js';
+import { roomsApi, setRoomToken, clearRoomToken } from '../api/api.js';
 import { GameHeader } from './Blackjack.jsx';
 
 const GAME_LABELS = {
@@ -150,27 +150,41 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
   );
 }
 
-function ReadyCheckOverlay({ roomId, playerId, roomPhase, timeRemaining, onReadySent }) {
+function ReadyCheckOverlay({ roomId, playerId, roomPhase, timeRemaining, onReadySent, onAuthError }) {
   const [readySent, setReadySent] = useState(false);
+  const [readyError, setReadyError] = useState('');
+  const [readyBusy, setReadyBusy] = useState(false);
 
   const countdown = roomPhase === 'READY_CHECK' ? Math.max(0, Math.min(3, timeRemaining)) : null;
 
   async function handleMarkReady() {
+    if (readyBusy) return;
+    setReadyBusy(true);
+    setReadyError('');
     try {
       await roomsApi.markReady(roomId, playerId);
       setReadySent(true);
       onReadySent?.();
-    } catch {}
+    } catch (err) {
+      if (err.status === 403) {
+        onAuthError?.(err);
+      } else {
+        setReadyError(err.message);
+      }
+    } finally {
+      setReadyBusy(false);
+    }
   }
 
   return (
     <div className="ready-check-overlay">
       <div className="ready-check-card">
+        {readyError && <p className="error-line" role="alert">{readyError}</p>}
         {roomPhase === 'LOBBY' && !readySent && (
           <>
             <h2>Get Ready</h2>
             <p>Press the button when you're ready to start</p>
-            <button className="ready-button" onClick={handleMarkReady}>
+            <button className="ready-button" onClick={handleMarkReady} disabled={readyBusy}>
               I'm Ready!
             </button>
           </>
@@ -195,7 +209,7 @@ function ReadyCheckOverlay({ roomId, playerId, roomPhase, timeRemaining, onReady
   );
 }
 
-export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickPlay }) {
+export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickPlay, onAuthLost, notice }) {
   const [rooms, setRooms] = useState([]);
   const [error, setError] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -264,6 +278,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
     setError('');
     try {
       const summary = await roomsApi.createRoom(roomName, gameType, gameSettings, playerId, playerName);
+      setRoomToken(summary.roomId, summary.playerToken);
       if (summary.isSinglePlayer && gameKey !== 'blackjack') {
         setActiveRoomId(summary.roomId);
       } else {
@@ -278,7 +293,6 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
   }
 
   async function handleJoinRoom(room) {
-    console.log('[RoomLobby] handleJoinRoom roomId:', room.roomId, 'playerId:', playerId, 'isSinglePlayer:', room.isSinglePlayer);
     if (busy) return;
     let password = '';
     if (room.passwordProtected) {
@@ -287,19 +301,24 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
     setBusy(true);
     setError('');
     try {
-      await roomsApi.joinRoom(room.roomId, playerId, playerName, password || undefined);
-      console.log('[RoomLobby] joinRoom succeeded for roomId:', room.roomId);
+      const summary = await roomsApi.joinRoom(room.roomId, playerId, playerName, password || undefined);
+      setRoomToken(summary.roomId, summary.playerToken);
       if (room.isSinglePlayer && gameKey !== 'blackjack') {
         setActiveRoomId(room.roomId);
       } else {
         onEnterGame(room.roomId, gameKey);
       }
     } catch (err) {
-      console.error('[RoomLobby] joinRoom failed for roomId:', room.roomId, 'error:', err.message);
       setError(err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  function handleReadyAuthError(err) {
+    clearRoomToken(activeRoomId);
+    setActiveRoomId(null);
+    onAuthLost?.(`${err.message}. Please rejoin the room.`);
   }
 
   if (activeRoomId) {
@@ -312,6 +331,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
           roomPhase={roomPhase}
           timeRemaining={timeRemaining}
           onReadySent={() => setReadySent(true)}
+          onAuthError={handleReadyAuthError}
         />
       </div>
     );
@@ -334,6 +354,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
       </div>
 
       {error && <p className="error-line" role="alert">{error}</p>}
+      {notice && <p className="error-line" role="alert">{notice}</p>}
 
       {rooms.length === 0 && !error && (
         <p style={{ color: '#607088', padding: '1rem 0' }}>

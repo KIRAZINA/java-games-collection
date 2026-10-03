@@ -23,9 +23,12 @@ function formatTime(seconds) {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+const MAX_POLL_FAILURES = 3;
+
 export function Game2048({ roomId, playerId, playerName, onExit }) {
   const [state, setState] = useState(null);
   const [error, setError] = useState('');
+  const [pollError, setPollError] = useState('');
   const [busy, setBusy] = useState(false);
   const [opponents, setOpponents] = useState([]);
   const [opponentAlert, setOpponentAlert] = useState('');
@@ -36,6 +39,7 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
   const prevOpponentsRef = useRef([]);
   const prevScoreRef = useRef(0);
   const moveRef = useRef(null);
+  const pollFailuresRef = useRef(0);
 
   const createSession = useCallback(async () => {
     setBusy(true);
@@ -65,19 +69,52 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
   useEffect(() => {
     if (!roomId) return;
 
-    const stateInterval = setInterval(async () => {
+    let cancelled = false;
+    let stopped = false;
+    let stateInterval;
+    let progressInterval;
+    pollFailuresRef.current = 0;
+    setPollError('');
+
+    const stopPolling = () => {
+      stopped = true;
+      clearInterval(stateInterval);
+      clearInterval(progressInterval);
+    };
+
+    const onPollFailure = (err) => {
+      if (cancelled || stopped) return;
+      if (err?.status === 404) {
+        setPollError('Room no longer exists. It may have been closed or deleted.');
+        stopPolling();
+        return;
+      }
+      pollFailuresRef.current += 1;
+      if (pollFailuresRef.current >= MAX_POLL_FAILURES) {
+        setPollError('Lost connection to the room. Please exit and try again.');
+        stopPolling();
+      }
+    };
+
+    stateInterval = setInterval(async () => {
       try {
         const roomState = await roomsApi.getRoomState(roomId);
+        if (cancelled || stopped) return;
+        pollFailuresRef.current = 0;
         setRoomPhase(roomState.roomPhase);
         if (roomState.roomPhase === 'PLAYING') {
           setTimeRemaining(roomState.timeRemaining);
         }
-      } catch {}
+      } catch (err) {
+        onPollFailure(err);
+      }
     }, 1000);
 
-    const progressInterval = setInterval(async () => {
+    progressInterval = setInterval(async () => {
       try {
         const progress = await roomsApi.getRoomProgress(roomId);
+        if (cancelled || stopped) return;
+        pollFailuresRef.current = 0;
         setTimeRemaining(progress.timeRemaining);
         if (progress.roomPhase) setRoomPhase(progress.roomPhase);
 
@@ -97,10 +134,13 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
           }
         }
         prevOpponentsRef.current = others;
-      } catch {}
+      } catch (err) {
+        onPollFailure(err);
+      }
     }, 2000);
 
     return () => {
+      cancelled = true;
       clearInterval(stateInterval);
       clearInterval(progressInterval);
     };
@@ -155,6 +195,24 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
 
   const isUrgent = roomPhase === 'PLAYING' && timeRemaining <= 10 && timeRemaining > 0;
 
+  if (roomId && pollError) {
+    return (
+      <div className="game-layout compact-game">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <GameHeader title="2048" meta="Disconnected" />
+          {onExit && (
+            <button onClick={onExit} style={{ minHeight: 36, padding: '0 12px' }}>Exit Room</button>
+          )}
+        </div>
+        <div className="ready-check-overlay">
+          <div className="ready-check-card">
+            <p className="error-line" role="alert">{pollError}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (roomId && (roomPhase === 'LOBBY' || roomPhase === 'READY_CHECK')) {
     return (
       <div className="game-layout compact-game">
@@ -206,11 +264,15 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
         <button
           id="g2048-reset"
           onClick={async () => {
-            if (!state) return;
+            if (!state || busy) return;
+            setBusy(true);
+            setError('');
             try {
               setState(await game2048Api.reset(state.sessionId));
             } catch (err) {
               setError(err.message);
+            } finally {
+              setBusy(false);
             }
           }}
           disabled={!state || busy}
@@ -220,6 +282,7 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
       </div>
 
       {error && <p className="error-line" role="alert">{error}</p>}
+      {pollError && <p className="error-line" role="alert">{pollError}</p>}
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <div className="status-strip">

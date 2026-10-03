@@ -188,6 +188,9 @@ public final class BlackjackSession {
     }
 
     private void validateBet(double amount) {
+        if (Double.isNaN(amount)) {
+            throw new IllegalArgumentException("Bet amount must be a number");
+        }
         if (amount < MIN_BET) {
             throw new IllegalArgumentException("Minimum bet is " + MIN_BET);
         }

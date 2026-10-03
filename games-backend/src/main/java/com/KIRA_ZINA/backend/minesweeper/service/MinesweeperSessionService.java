@@ -2,6 +2,7 @@ package com.KIRA_ZINA.backend.minesweeper.service;
 
 import com.KIRA_ZINA.backend.minesweeper.domain.MinesweeperSession;
 import com.KIRA_ZINA.backend.minesweeper.domain.MinesweeperState;
+import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
@@ -64,7 +65,7 @@ public class MinesweeperSessionService {
     private MinesweeperSession requireSession(String sessionId) {
         MinesweeperSession session = sessions.get(sessionId);
         if (session == null) {
-            throw new IllegalArgumentException("Minesweeper session not found: " + sessionId);
+            throw new ResourceNotFoundException("Minesweeper session not found: " + sessionId);
         }
         return session;
     }

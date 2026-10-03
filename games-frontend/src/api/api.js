@@ -1,11 +1,66 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
+const ROOM_TOKENS_STORAGE_KEY = 'roomTokens';
+let roomTokens = {};
+
+function loadRoomTokens() {
+  try {
+    const raw = sessionStorage.getItem(ROOM_TOKENS_STORAGE_KEY);
+    roomTokens = raw ? JSON.parse(raw) : {};
+    if (!roomTokens || typeof roomTokens !== 'object' || Array.isArray(roomTokens)) roomTokens = {};
+  } catch {
+    roomTokens = {};
+  }
+}
+
+function persistRoomTokens() {
+  try {
+    sessionStorage.setItem(ROOM_TOKENS_STORAGE_KEY, JSON.stringify(roomTokens));
+  } catch {}
+}
+
+loadRoomTokens();
+
+export function setRoomToken(roomId, token) {
+  if (!roomId || !token) return;
+  roomTokens[roomId] = token;
+  persistRoomTokens();
+}
+
+export function clearRoomToken(roomId) {
+  if (!roomId || !(roomId in roomTokens)) return;
+  delete roomTokens[roomId];
+  persistRoomTokens();
+}
+
+export function getRoomToken(roomId) {
+  return roomTokens[roomId];
+}
+
+export function rehydrateRoomTokens() {
+  loadRoomTokens();
+}
+
+export function extractRoomIdFromPath(path) {
+  const match = /^\/api\/rooms\/(?!player(?:\/|$))([^/?]+)/.exec(path);
+  if (!match) return null;
+  return match[1];
+}
+
+function tokenForPath(path) {
+  const roomId = extractRoomIdFromPath(path);
+  if (!roomId) return undefined;
+  return roomTokens[roomId];
+}
+
 export async function api(path, options = {}) {
   let response;
   try {
+    const token = tokenForPath(path);
     response = await fetch(`${API_BASE}${path}`, {
       headers: {
         'Content-Type': 'application/json',
+        ...(token ? { 'X-Player-Token': token } : {}),
         ...(options.headers ?? {}),
       },
       ...options,
@@ -15,12 +70,18 @@ export async function api(path, options = {}) {
   }
 
   if (!response.ok) {
-    let message = `Request failed with ${response.status}`;
+    let message = response.status >= 500 ? 'Something went wrong' : `Request failed with ${response.status}`;
     try {
       const error = await response.json();
-      message = error.message ?? message;
+      message = error.message ?? error.error ?? message;
     } catch {}
-    throw new Error(message);
+    const err = new Error(message);
+    err.status = response.status;
+    if (response.status === 403) {
+      const roomId = extractRoomIdFromPath(path);
+      if (roomId) clearRoomToken(roomId);
+    }
+    throw err;
   }
 
   if (response.status === 204) return null;
@@ -119,7 +180,10 @@ export const roomsApi = {
       method: 'POST',
       body: JSON.stringify({ playerId, sessionId }),
     }),
-  getRoomsForPlayer: (playerId) => api(`/api/rooms/player/${playerId}`),
+  getRoomsForPlayer: (playerId, token) =>
+    api(`/api/rooms/player/${playerId}`, {
+      headers: token ? { 'X-Player-Token': token } : {},
+    }),
   markReady: (roomId, playerId) =>
     api(`/api/rooms/${roomId}/ready`, {
       method: 'POST',

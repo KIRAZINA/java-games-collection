@@ -1,5 +1,7 @@
 package com.KIRA_ZINA.backend.common;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -23,7 +25,7 @@ public final class GameRoom {
     private volatile long readyCheckStartTime;
     private volatile long gameStartTime;
     private Instant createdAt = Instant.now();
-    private Instant lastActivity = Instant.now();
+    private volatile Instant lastActivity = Instant.now();
     private Object gameSession;
     private String gameSessionId;
     private volatile String winnerId;
@@ -149,6 +151,7 @@ public final class GameRoom {
 
     public static record Player(String id, String name, boolean isBot) {}
 
+    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record RoomSummary(
             String roomId,
             String roomName,
@@ -162,7 +165,8 @@ public final class GameRoom {
             Instant createdAt,
             Instant lastActivity,
             int timeLimitSeconds,
-            boolean isSinglePlayer
+            boolean isSinglePlayer,
+            String playerToken
     ) {
         public static RoomSummary from(GameRoom room) {
             Player owner = room.players.get(room.ownerId);
@@ -180,7 +184,27 @@ public final class GameRoom {
                     room.createdAt,
                     room.lastActivity,
                     room.settings.timeLimitSeconds(),
-                    room.settings.isSinglePlayer()
+                    room.settings.isSinglePlayer(),
+                    null
+            );
+        }
+
+        public RoomSummary withPlayerToken(String token) {
+            return new RoomSummary(
+                    roomId,
+                    roomName,
+                    gameType,
+                    phase,
+                    playerCount,
+                    maxPlayers,
+                    spectatorCount,
+                    passwordProtected,
+                    ownerName,
+                    createdAt,
+                    lastActivity,
+                    timeLimitSeconds,
+                    isSinglePlayer,
+                    token
             );
         }
     }
