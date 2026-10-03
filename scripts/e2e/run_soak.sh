@@ -229,6 +229,8 @@ esac
 echo "=== soak summary ==="
 echo "  duration=${DURATION}s chaos=$CHAOS waves=$WAVES players=$((${#PLAYER_PIDS[@]})) ok=$OK interrupted=$INTERRUPTED failed=$FAILED"
 echo "  final room list: no soak-* rooms (leak check clean)"
+echo "--- sample player log (wave 1 owner) ---"
+cat "$WORK/w1.own.out" 2>/dev/null || echo "(no wave 1 log)"
 bash "$E2E_DIR/stop_server.sh" || die "stop_server failed"
 
 if [ "$CHAOS" = 1 ]; then
