@@ -1,5 +1,8 @@
 package com.KIRA_ZINA.backend.common;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+
 import java.util.Map;
 
 public record GameSettings(
@@ -8,7 +11,7 @@ public record GameSettings(
         boolean passwordProtected,
         String passwordHash,
         boolean allowBots,
-        int maxPlayers,
+        @Min(1) @Max(8) int maxPlayers,
         int timeLimitSeconds,
         boolean isSinglePlayer
 ) {

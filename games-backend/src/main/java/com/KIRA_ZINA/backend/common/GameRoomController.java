@@ -2,6 +2,9 @@ package com.KIRA_ZINA.backend.common;
 
 import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
 import com.KIRA_ZINA.backend.common.idempotency.IdempotencyService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,7 +33,7 @@ public class GameRoomController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public GameRoom.RoomSummary createRoom(@RequestBody CreateRoomRequest request) {
+    public GameRoom.RoomSummary createRoom(@Valid @RequestBody CreateRoomRequest request) {
         GameSettings settings = request.settings() != null ? request.settings() : GameSettings.defaultFor(request.gameType());
         GameRoom.RoomSummary summary = roomService.createRoom(request.roomName(), settings, request.ownerId(), request.ownerName());
         return summary.withPlayerToken(roomService.issuePlayerToken(summary.roomId(), request.ownerId()));
@@ -46,7 +49,7 @@ public class GameRoomController {
     @PostMapping("/{roomId}/join")
     public GameRoom.RoomSummary joinRoom(
             @PathVariable("roomId") String roomId,
-            @RequestBody JoinRoomRequest request,
+            @Valid @RequestBody JoinRoomRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idKey) throws Exception {
         if (idKey != null && !idKey.isEmpty()) {
             try {
@@ -68,7 +71,7 @@ public class GameRoomController {
     }
 
     @PostMapping("/{roomId}/spectate")
-    public GameRoom.RoomSummary joinAsSpectator(@PathVariable("roomId") String roomId, @RequestBody SpectateRequest request) {
+    public GameRoom.RoomSummary joinAsSpectator(@PathVariable("roomId") String roomId, @Valid @RequestBody SpectateRequest request) {
         GameRoom.RoomSummary summary = roomService.joinAsSpectator(roomId, request.spectatorId(), request.spectatorName());
         return summary.withPlayerToken(roomService.issuePlayerToken(roomId, request.spectatorId()));
     }
@@ -77,7 +80,7 @@ public class GameRoomController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void leaveRoom(
             @PathVariable("roomId") String roomId,
-            @RequestBody LeaveRequest request,
+            @Valid @RequestBody LeaveRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idKey,
             @RequestHeader(value = "X-Player-Token", required = false) String playerToken) throws Exception {
         roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
@@ -100,7 +103,7 @@ public class GameRoomController {
 
     @DeleteMapping("/{roomId}/spectate")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void leaveAsSpectator(@PathVariable("roomId") String roomId, @RequestBody LeaveRequest request) {
+    public void leaveAsSpectator(@PathVariable("roomId") String roomId, @Valid @RequestBody LeaveRequest request) {
         roomService.leaveAsSpectator(roomId, request.playerId());
     }
 
@@ -108,7 +111,7 @@ public class GameRoomController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteRoom(
             @PathVariable("roomId") String roomId,
-            @RequestBody DeleteRoomRequest request,
+            @Valid @RequestBody DeleteRoomRequest request,
             @RequestHeader(value = "X-Player-Token", required = false) String playerToken) {
         roomService.verifyPlayerToken(roomId, request.requesterId(), playerToken);
         roomService.deleteRoom(roomId, request.requesterId());
@@ -136,7 +139,7 @@ public class GameRoomController {
     @ResponseStatus(HttpStatus.CREATED)
     public void registerSession(
             @PathVariable("roomId") String roomId,
-            @RequestBody RegisterSessionRequest request,
+            @Valid @RequestBody RegisterSessionRequest request,
             @RequestHeader(value = "X-Player-Token", required = false) String playerToken) {
         roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
         roomService.registerPlayerSession(roomId, request.playerId(), request.sessionId());
@@ -146,7 +149,7 @@ public class GameRoomController {
     @ResponseStatus(HttpStatus.OK)
     public void markReady(
             @PathVariable("roomId") String roomId,
-            @RequestBody MarkReadyRequest request,
+            @Valid @RequestBody MarkReadyRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idKey,
             @RequestHeader(value = "X-Player-Token", required = false) String playerToken) throws Exception {
         roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
@@ -176,38 +179,38 @@ public class GameRoomController {
     }
 
     public record CreateRoomRequest(
-            String roomName,
-            GameType gameType,
-            GameSettings settings,
-            String ownerId,
-            String ownerName
+            @NotBlank String roomName,
+            @NotNull GameType gameType,
+            @Valid GameSettings settings,
+            @NotBlank String ownerId,
+            @NotBlank String ownerName
     ) {}
 
     public record JoinRoomRequest(
-            String playerId,
-            String playerName,
+            @NotBlank String playerId,
+            @NotBlank String playerName,
             String password
     ) {}
 
     public record SpectateRequest(
-            String spectatorId,
-            String spectatorName
+            @NotBlank String spectatorId,
+            @NotBlank String spectatorName
     ) {}
 
     public record LeaveRequest(
-            String playerId
+            @NotBlank String playerId
     ) {}
 
     public record DeleteRoomRequest(
-            String requesterId
+            @NotBlank String requesterId
     ) {}
 
     public record RegisterSessionRequest(
-            String playerId,
-            String sessionId
+            @NotBlank String playerId,
+            @NotBlank String sessionId
     ) {}
 
     public record MarkReadyRequest(
-            String playerId
+            @NotBlank String playerId
     ) {}
 }

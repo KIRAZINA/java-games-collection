@@ -9,6 +9,7 @@ import org.springframework.web.context.request.WebRequest;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -50,6 +51,27 @@ public class GlobalExceptionHandler {
         body.put("error", error);
         body.put("status", 405);
         return new ResponseEntity<>(body, HttpStatus.METHOD_NOT_ALLOWED);
+    }
+
+    // Bean-validation failures on @Valid request DTOs (e.g. missing ownerId on
+    // POST /api/rooms) must be 400 naming the offending field, not the generic 500
+    // from the catch-all handler. Same {"error","status"} shape as the 404/405/403
+    // handlers; all field errors folded into the error message as "field: message".
+    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, Object>> handleMethodArgumentNotValid(
+            org.springframework.web.bind.MethodArgumentNotValidException ex, WebRequest request) {
+        String error = ex.getBindingResult().getFieldErrors().stream()
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        if (error.isEmpty()) {
+            error = ex.getBindingResult().getAllErrors().stream()
+                    .map(e -> e.getDefaultMessage() == null ? String.valueOf(e.getCode()) : e.getDefaultMessage())
+                    .collect(Collectors.joining(", "));
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", error);
+        body.put("status", 400);
+        return new ResponseEntity<>(body, HttpStatus.BAD_REQUEST);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
