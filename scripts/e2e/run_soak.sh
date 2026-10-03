@@ -136,13 +136,12 @@ fire_chaos() {
   pid="$(cat "${E2E_PID_FILE:-${TMPDIR:-/tmp}/e2e-games-server.pid}" 2>/dev/null || true)"
   [ -n "$pid" ] || die "chaos: no server PID file"
   echo "=== chaos: SIGKILL pid=$pid ==="
+  # // = / after msys conversion; taskkill /F is the Windows SIGKILL
+  # equivalent (TerminateProcess). Both are attempted: kill -9 works for
+  # msys-owned pids, taskkill //F for Windows pids.
   kill -9 "$pid" 2>/dev/null || true
-  # confirm the process is truly gone (taskkill fallback for msys/native pid)
+  taskkill //F //PID "$pid" >/dev/null 2>&1 || true
   sleep 1
-  if kill -0 "$pid" 2>/dev/null; then
-    taskkill //F //PID "$pid" >/dev/null 2>&1 || true
-    sleep 1
-  fi
   local i=0 up=1
   while [ "$i" -lt 10 ]; do
     curl -fsS --max-time 2 "$BASE_URL/actuator/health" >/dev/null 2>&1 || { up=0; break; }

@@ -31,15 +31,16 @@ if [ -z "$PID" ]; then
   exit 0
 fi
 
-if kill -0 "$PID" 2>/dev/null; then
-  kill -TERM "$PID" 2>/dev/null || true
-  for _ in $(seq 1 10); do
-    server_healthy || break
-    sleep 1
-  done
-fi
+# The PID file holds the WINDOWS pid (see start_server.sh): msys kill is not
+# reliable across process namespaces, so signal via taskkill ( // = / after
+# msys argument conversion ).
+taskkill //PID "$PID" >/dev/null 2>&1 || true
+for _ in $(seq 1 10); do
+  server_healthy || break
+  sleep 1
+done
 
-if kill -0 "$PID" 2>/dev/null || server_healthy; then
+if server_healthy; then
   echo "graceful stop did not finish; escalating to taskkill /F pid=$PID"
   taskkill //F //PID "$PID" >/dev/null 2>&1 || true
   for _ in $(seq 1 5); do

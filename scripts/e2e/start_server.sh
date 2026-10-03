@@ -28,14 +28,12 @@ server_healthy() {
   curl -fsS --max-time 3 "$BASE_URL/actuator/health" 2>/dev/null | grep -q '"status":"UP"'
 }
 
-if [ -f "$PID_FILE" ]; then
+if [ -f "$PID_FILE" ] && server_healthy; then
   old_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-  if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null && server_healthy; then
-    echo "server already running pid=$old_pid base=$BASE_URL"
-    exit 0
-  fi
-  rm -f "$PID_FILE"
+  echo "server already running pid=$old_pid base=$BASE_URL"
+  exit 0
 fi
+rm -f "$PID_FILE"
 
 JAR="$(jar_path)"
 if [ -z "$JAR" ] || [ "${E2E_REBUILD:-0}" = "1" ]; then
@@ -56,7 +54,17 @@ echo "started java pid=$SERVER_PID jar=$(basename "$JAR") log=$LOG_FILE"
 
 for _ in $(seq 1 90); do
   if server_healthy; then
-    echo "server up pid=$SERVER_PID base=$BASE_URL"
+    # Record the WINDOWS pid: msys $! can differ from the Windows process id
+    # (kill/taskkill consumers need the Windows pid). netstat lists it for the
+    # listening socket; fall back to the msys pid if parsing ever fails.
+    WIN_PID="$(netstat -ano | grep LISTENING | grep ":$PORT " | head -n 1 | awk '{print $NF}')"
+    if [ -n "$WIN_PID" ]; then
+      echo "$WIN_PID" > "$PID_FILE"
+      echo "server up pid=$WIN_PID (shell pid=$SERVER_PID) base=$BASE_URL"
+    else
+      echo "$SERVER_PID" > "$PID_FILE"
+      echo "server up pid=$SERVER_PID (WARNING: netstat pid lookup failed) base=$BASE_URL"
+    fi
     exit 0
   fi
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
