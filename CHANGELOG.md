@@ -1465,3 +1465,207 @@ vitest include), **not applied** pending curator direction.
 - `CHANGELOG.md` (this section)
 
 No production code was changed in Part B.
+
+---
+
+## STEP 6b.1 - close the Part B findings: F1-F3 product fixes, F4-F5 test fixes, F6 infra fix
+
+Prerequisite state: Part A accepted (255/0/0/0, 87 jsdom); Part B accepted as
+findings (1 passed | 5 failed, root causes reported). Six fixes, all committed
+before any re-run; no feature work, no gameplay change, no response-shape
+change, no assertion weakened.
+
+### F1 - `playerId` was the single character `p` in every tab (CRITICAL) - `5a56885`
+
+`App.jsx` had `const [playerId] = useMemo(() => \`player-...\`, [])`.
+Bracket-destructuring a **string** yields its first character, so every tab,
+page and browser context sent `ownerId/playerId: "p"`. The second join/create
+then called `leaveRoom("p")`, evicting the first player and deleting their
+room - which is why B2/B3/B6 failed in the real browser while every jsdom test
+(passing `playerId` as a prop) stayed green. Present since `7cecf8c`
+(2026-06-10): **multiplayer had never actually worked in a browser.**
+
+Fix: `const [playerId] = useState(() => \`player-${...}\`)` - the lazy
+`useState` initializer is StrictMode-safe (the stated reason for preferring it
+over `useMemo([])`), and it returns the whole generated string. Generation uses
+`crypto.randomUUID()` with a timestamp/random fallback, kept because
+`randomUUID()` is `[SecureContext]`-only while `nginx.conf` serves plain HTTP
+on :80 - flagged here as a deliberate deviation from the literal fix text.
+
+**Test that proves it:** `src/test/App.test.jsx` - "two mounted App instances
+produce different, non-trivial playerIds". It mounts `<App />` twice, drives a
+quick play in each, and compares the `ownerId` captured from `createRoom`.
+Against the pre-F1 code it fails with `expected 1 to be greater than 1`
+(playerId was `"p"`); with the fix both ids are `player-<uuid>` and distinct.
+
+### F2 - quick play sent `ownerName: ""` (stale closure) - `abbd6a4`
+
+`handleQuickPlay` called `setPlayerName(...)` and then synchronously read
+`playerName` in `createRoom`, so the first-ever quick play posted
+`ownerName: ""` / `roomName: "'s Practice"`. Pre-Part-A that was a silent 201
+with an empty owner name; Part A's `@NotBlank(ownerName)` made it a hard 400
+that dropped the user back on an empty lobby (B4).
+
+Fix: the prompted name resolves into a local `displayName` that is passed to
+`createRoom` directly; the state is still committed for later flows, so the
+user-visible path is unchanged.
+
+**Test that proves it:** `src/test/App.test.jsx` - "sends ownerName Alice to
+createRoom even though playerName state is still empty" (prompt mocked to
+`"Alice"`, `roomsApi.createRoom` spied). Against the pre-F2 code it fails with
+`expected '' to be 'Alice'`. Browser-side proof: **B4 passes** (was failing).
+
+### F3 - module-scope token cache ignored `sessionStorage.clear()` - `665d0a6`
+
+`api.js` kept `roomTokens` in memory and rehydrated only at App mount, so a
+same-tab clear (or a server-side expiry the client cannot see) left the entry
+in place and `X-Player-Token` kept going out - the app could never observe the
+403 it needs to recover.
+
+Fix: `tokenForPath()` reconciles against `sessionStorage` on **every request** -
+key gone -> wipe the cache and send no header; that room's entry gone -> drop
+just that token; store unreadable (storage disabled) -> keep the cache rather
+than silently dropping auth. A `storage` event never fires for a same-tab clear,
+which is why the lazy read on the request path is the mechanism (no listener is
+used as the primary path).
+
+**Test that proves it:** `src/test/TokenLoss.test.jsx` - the two token-loss
+tests drop the `rehydrateRoomTokens()` workaround (it re-seeded the cache right
+after clearing, which is exactly what hid the bug) and now assert
+`sessionStorage.clear()` -> the ready request carries **no**
+`X-Player-Token` -> 403 -> rejoin notice + back to the list + token gone from
+memory. Against the old `api.js` both fail with `expected 'tok-abc' to be
+undefined`. Browser-side proof: B5's poll assertion
+`headers()['x-player-token']` is now falsy (was truthy).
+
+### F4 - B3 room payload: knobs belong inside `settings` - `83d3b09`
+
+The scenario sent `maxPlayers`/`timeLimitSeconds`/flags at the top level with
+`settings: {}`. `CreateRoomRequest` only accepts
+`roomName/gameType/settings/ownerId/ownerName`, and `GameSettings.maxPlayers`
+is a primitive `int` that defaults to 0, which Part A's `@Min(1)` answered with
+`400 settings.maxPlayers`. The whole knob block now nests inside `settings`,
+matching `CreateRoomForm`.
+
+**Test that proves it:** `e2e/step6b.spec.ts` B3 itself - room creation now
+returns 201 and both players reach the lobby (it previously failed on line 201
+with the 400).
+
+### F5 - B5 used a solo room, which is created already in PLAYING - `83d3b09`
+
+Solo rooms are auto-started by `GameRoomService.createRoom` (owner marked ready
++ `startGame`), so `ReadyCheckOverlay` - the only place "I'm Ready!" renders -
+never appeared. The scenario now creates a **2-player room without
+`isSinglePlayer`**, which stays in `LOBBY`.
+
+**Test that proves it:** `e2e/step6b.spec.ts` B5 - the room now does stay in
+the lobby (`Waiting for players` visible, line 343) and the F3 poll assertion
+passes. The scenario still fails later at the "I'm Ready!" step - see
+*Remaining failures* below: that is a product gap, not a scenario defect.
+
+### F6 - vitest collected the Playwright spec - `3bc8550`
+
+`vite.config.js` now sets `exclude: [...configDefaults.exclude, 'e2e/**']`.
+Config only; the jsdom suite is untouched.
+
+**Test that proves it:** `npx vitest run` no longer reports
+"Playwright Test did not expect test() to be called here" and runs 9 files /
+89 tests.
+
+### Re-run results (raw)
+
+- `npx vitest run` -> **9 files, 89 passed** (`%TEMP%\step6b\vitest-6b1.txt`).
+  Arithmetic: 87 baseline + 2 new `App.test.jsx` (F1 guard + F2 guard) = 89;
+  `TokenLoss.test.jsx` stayed at 3 (rewritten, not added).
+- `mvn test -pl games-backend` -> **Tests run: 255, Failures: 0, Errors: 0,
+  Skipped: 0 / BUILD SUCCESS**, 47.393 s (`%TEMP%\step6b\mvn-6b1.txt`).
+  Arithmetic unchanged: 249 baseline + 6 `DtoValidationTest` = 255.
+- `npm run e2e` -> **2 passed | 4 failed (2.1m)**
+  (`%TEMP%\step6b\e2e-6b1.txt`):
+
+  | scenario | before 6b.1 | after 6b.1 |
+  | --- | --- | --- |
+  | B1 quick-play Blackjack round | passed | **passed** (2.1s) |
+  | B2 two-player Minesweeper | failed at `:133` (join) | failed at `:138` (Ready) |
+  | B3 two-player 2048, 8s settle | failed at `:201` (400) | failed at `:234` (Ready) |
+  | B4 backend restart mid-game | failed at `:279` | **passed** (11.2s) |
+  | B5 token loss | failed at `:361` (Ready) | failed at `:354` (Ready) |
+  | B6 two-tab isolation | failed at `:403` (room missing) | failed at `:406` (Home click) |
+
+  F1, F2, F3 and F4 are all demonstrated by the scenarios moving *past* their
+  previous failure point: B2's page-B join now succeeds, B3 now creates the
+  room, B5's post-clear poll now sends no token, B4 passes outright.
+
+### Remaining failures (reported, not fixed - stop per the step constraint)
+
+Three scenarios stop at the same place, and one stops later. Verbatim:
+
+```
+B2  > 138 | await expect(readyA).toBeVisible({ timeout: 15000 });
+   Error: expect(locator).toBeVisible() failed
+   Locator: getByRole('button', { name: 'I\'m Ready!' })
+   Expected: visible / Timeout: 15000ms / Error: element(s) not found
+
+B3  > 234 | await expect(readyA).toBeVisible({ timeout: 15000 });   (identical error)
+
+B5  > 354 | await expect(ready).toBeVisible({ timeout: 15000 });    (identical error)
+
+B6  Test timeout of 30000ms exceeded.
+   > 406 | await pageB.getByRole('button', { name: 'Home' }).click();
+   locator.click: waiting for getByRole('button', { name: 'Home' })
+     - locator resolved to <button>← Home</button>
+     - <div class="ready-check-overlay">…</div> from <section class="game-stage">…</section>
+       subtree intercepts pointer events   (57 retries)
+```
+
+**Root cause (product, out of scope for 6b.1): there is no UI that can ready a
+multiplayer room.** `RoomLobby` mounts `ReadyCheckOverlay` only when
+`isSinglePlayer && gameKey !== 'blackjack'` (`RoomLobby.jsx:282` create,
+`:306` join); every other room goes straight to the game component
+(`onEnterGame`), whose waiting card renders `h2 "Waiting for players"` with a
+spinner and **no button** (`Minesweeper.jsx:215-221`, same in `Game2048`/
+`Blackjack`). The only `roomsApi.markReady` call in the whole frontend is
+`RoomLobby.jsx:165`. Solo rooms - the only rooms that reach the overlay - are
+auto-started server-side, so they never sit in `LOBBY`. Net effect: **a
+multiplayer game can never be started from the UI**, in any room type.
+
+Playwright's own accessibility snapshot of the failed B2 page (verbatim, from
+`test-results/step6b-B2-.../error-context.md`):
+
+```yaml
+- heading "Minesweeper" [level=2]
+- text: Waiting...
+- heading "Waiting for players" [level=2]
+- paragraph: Other players are joining the room. The game will start shortly.
+```
+(no button of any kind; `Playing as player-a-1791116237224` in the sidebar
+shows F1's distinct id in a real browser)
+
+**Root cause of B6 (product, out of scope):** `.ready-check-overlay` is
+`position: fixed; inset: 0; z-index: 200` (`styles.css:409-416`), so the
+waiting card covers the sidebar - "← Home" and the game tabs are unreachable
+while a room is waiting, and the card itself offers no exit. The scenario's
+"isolation" assertions all passed before that point (both rooms exist, distinct
+ids, `1/2`, `LOBBY`), i.e. **F1 is proven in the browser by B6's list check.**
+
+### Files touched in Step 6b.1 (scope proof)
+
+- `games-frontend/vite.config.js` (F6)
+- `games-frontend/src/App.jsx` (F1, F2)
+- `games-frontend/src/test/App.test.jsx` (new: F1 + F2 guards, 2 tests)
+- `games-frontend/src/api/api.js` (F3)
+- `games-frontend/src/test/TokenLoss.test.jsx` (F3 update, still 3 tests)
+- `games-frontend/e2e/step6b.spec.ts` (F4, F5)
+- `CHANGELOG.md` (this section)
+
+No production dependency added; no gameplay rule changed; no successful-
+response JSON shape changed; no assertion weakened or test removed.
+
+### Deferred to 6b.2 (per the step instruction)
+
+- `winnerId`/`winnerScore` exposure from `settleGame` (the B3 "and a winner"
+  gap).
+- The multiplayer ready affordance (product decision: add a ready control to
+  the waiting card / route multiplayer rooms through the ready overlay, vs.
+  auto-ready semantics) and the `.ready-check-overlay` navigation lockout -
+  both are product changes and therefore out of scope for 6b.1.
