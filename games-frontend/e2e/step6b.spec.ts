@@ -3,7 +3,16 @@
 // Infrastructure: globalSetup starts/reuses the backend, builds the frontend
 // and serves dist on the fixed test port 4179 with an /api proxy; one worker,
 // no parallelism (shared backend, B4 restarts it). No fixed sleeps anywhere:
-// waitForSelector/expect polling only. No production code is touched.
+// waitForSelector/expect polling only.
+//
+// Step 6b.2 (G1): a room with a ready step now waits in RoomLobby's ready
+// overlay until it reaches PLAYING instead of opening the game component's
+// waiting card (RoomLobby.jsx handleCreateRoom/handleJoinRoom). The pre-game
+// assertions therefore pin that overlay's LOBBY heading - the exact text
+// "Get Ready" (RoomLobby.jsx:185) - where they used to pin "Waiting for
+// players". Same state, stricter: "Get Ready" only renders once the room
+// really reports roomPhase === 'LOBBY', and it distinguishes LOBBY from
+// READY_CHECK ("Get Ready!"), which the old card text did not.
 import { test, expect, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
@@ -119,7 +128,7 @@ test('B2 - two-player Minesweeper room, real browsers (two pages)', async ({ bro
   await pageA.getByRole('button', { name: '+ Create Room' }).click();
   await pageA.locator('form').getByLabel('Room Name').fill(roomName);
   await pageA.locator('form button[type="submit"]').click();
-  await expect(pageA.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(pageA.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
 
   // Page B: list rooms, join the room by name
   const ctxB = await browser.newContext();
@@ -130,7 +139,7 @@ test('B2 - two-player Minesweeper room, real browsers (two pages)', async ({ bro
   const nameCol = pageB.locator(`div:has(> strong:text-is("${roomName}"))`);
   await expect(nameCol).toContainText('1/2 players', { timeout: 15000 });
   await nameCol.locator('..').getByRole('button', { name: 'Join' }).click();
-  await expect(pageB.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(pageB.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
 
   // Both: click "I'm Ready!"
   const readyA = pageA.getByRole('button', { name: "I'm Ready!" });
@@ -216,7 +225,7 @@ test('B3 - two-player 2048 room settles to GAME_OVER after the 8s time limit', a
   const colA = pageA.locator(`div:has(> strong:text-is("${roomName}"))`);
   await expect(colA).toContainText('1/3 players', { timeout: 15000 });
   await colA.locator('..').getByRole('button', { name: 'Join' }).click();
-  await expect(pageA.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(pageA.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
 
   const ctxB = await browser.newContext();
   const pageB = await ctxB.newPage();
@@ -226,7 +235,19 @@ test('B3 - two-player 2048 room settles to GAME_OVER after the 8s time limit', a
   const colB = pageB.locator(`div:has(> strong:text-is("${roomName}"))`);
   await expect(colB).toContainText('2/3 players', { timeout: 15000 });
   await colB.locator('..').getByRole('button', { name: 'Join' }).click();
-  await expect(pageB.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(pageB.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
+
+  // The API-created owner occupies a real slot (the list showed 1/3 before the
+  // first join) and allPlayersReady() counts every present player
+  // (GameRoom.java:60) - an owner with no browser to press "I'm Ready!" would
+  // leave the room in LOBBY forever. Ready it through the API now that both UI
+  // players are in, exactly what a third player would do.
+  const ownerToken = (await created.json()).playerToken as string;
+  const ownerReady = await request.post(`/api/rooms/${roomId}/ready`, {
+    headers: { 'X-Player-Token': ownerToken },
+    data: { playerId: `api-owner-${RUN}` },
+  });
+  expect(ownerReady.status(), await ownerReady.text()).toBe(200);
 
   // Both: click "I'm Ready!"
   const readyA = pageA.getByRole('button', { name: "I'm Ready!" });
@@ -334,7 +355,7 @@ test('B5 - token loss (sessionStorage cleared) returns the player to the room li
   await form.locator('button[type="submit"]').click();
 
   // the room stays in LOBBY
-  await expect(page.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
 
   // In Page A, evaluate sessionStorage.clear()
   await page.evaluate(() => sessionStorage.clear());
@@ -370,7 +391,7 @@ test('B6 - two-tab isolation sanity check', async ({ browser }) => {
   await pageA.getByRole('button', { name: '+ Create Room' }).click();
   await pageA.locator('form').getByLabel('Room Name').fill(alpha);
   await pageA.locator('form button[type="submit"]').click();
-  await expect(pageA.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(pageA.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
 
   // Tab B: sees A's room in the list, then creates its own room as player-b
   const ctxB = await browser.newContext();
@@ -385,11 +406,11 @@ test('B6 - two-tab isolation sanity check', async ({ browser }) => {
   await pageB.getByRole('button', { name: '+ Create Room' }).click();
   await pageB.locator('form').getByLabel('Room Name').fill(bravo);
   await pageB.locator('form button[type="submit"]').click();
-  await expect(pageB.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
+  await expect(pageB.getByText('Get Ready')).toBeVisible({ timeout: 15000 });
 
   // Assert: neither tab's action mutated the other's room state -
   // A is untouched, and both rooms exist separately in the list
-  await expect(pageA.getByText('Waiting for players')).toBeVisible({ timeout: 5000 });
+  await expect(pageA.getByText('Get Ready')).toBeVisible({ timeout: 5000 });
   const list = await (await pageB.request.get('/api/rooms?type=MINESWEEPER')).json();
   const roomAlpha = list.find((r: { roomName: string }) => r.roomName === alpha);
   const roomBravo = list.find((r: { roomName: string }) => r.roomName === bravo);
@@ -413,7 +434,7 @@ test('B6 - two-tab isolation sanity check', async ({ browser }) => {
   const alphaState = await (await pageA.request.get(`/api/rooms/${roomAlpha.roomId}`)).json();
   expect(alphaState.playerCount).toBe(1);
   expect(alphaState.phase).toBe('LOBBY');
-  await expect(pageA.getByText('Waiting for players')).toBeVisible({ timeout: 5000 });
+  await expect(pageA.getByText('Get Ready')).toBeVisible({ timeout: 5000 });
 
   await ctxA.close();
   await ctxB.close();
