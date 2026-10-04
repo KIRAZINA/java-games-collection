@@ -2356,3 +2356,159 @@ the opponent view has no card data at all (D2).
 - Gates not rerun (no source change); the two diagnostic runs themselves
   exercised create/join/ready/session/register/bet end-to-end, all 2xx
   (`%TEMP%\step6d\d1-final.txt`, `d234-final.txt`).
+
+## STEP 6e - opponent cards on /state (Part A) + Create Room latency (Part B)
+
+Closes the two STEP 6d findings that are in scope: F-6d-5 (opponent strip has no
+card data; cards exist only in the session-level `BlackjackState`) and F-6d-1
+(create-room latency is frontend timer cadence, not network). Part A projects a
+live blackjack hand onto `GET /state` and renders it in an `OpponentPanel`;
+Part B makes the room hand-off and the ready overlay fire on the first frame
+instead of waiting for a poll tick. No gameplay rules change; `/state` gains one
+additive nullable field and is otherwise byte-identical.
+
+### Part A - opponent cards in /state + OpponentPanel
+
+A1 - additive `blackjack` projection on /state
+- `RoomStateResponse` gains a `BlackjackView(playerCards, playerValue,
+  dealerCards, dealerValue, phase)` record; `PlayerState` gains a nullable
+  `blackjack` component under `@JsonInclude(NON_NULL)`, so the key is omitted
+  from JSON whenever it is null.
+- `GameRoomService.extractBlackjackView(sid, gameType)`: returns null for every
+  non-blackjack room and for a blackjack session that has not dealt a hand yet
+  (BETTING / closed); otherwise reuses the session's EXISTING `state()`
+  snapshot, so the dealer hole-card reveal rule is the pre-existing
+  `BlackjackSession.snapshot()` one - no new reveal logic is added. The card
+  lists are the snapshot's immutable copies, so a poll cannot observe a
+  half-mutated hand. `GameRoomService:273` wires it into the `/state` players
+  loop.
+- Live capture (this step, against a running backend):
+  - 2048 room, live: player entry keys `[playerId, playerName, metrics]` - no
+    `blackjack` key.
+  - blackjack PRE-BET: keys `[playerId, playerName, metrics]` - no `blackjack`.
+  - blackjack LIVE (after a $10 bet): keys `[playerId, playerName, metrics,
+    blackjack]`; `blackjack` = `{ playerCards: [K SPADES, Q SPADES],
+    playerValue: 20, dealerCards: [J SPADES] (1, face-up only),
+    dealerValue: null, phase: "PLAYER_TURN" }`.
+
+A3 - /state stays UNPROTECTED; roomId is the auth scope (decision, no code)
+- `/state` is a GET and is explicitly UNPROTECTED by the Step 3b threat model;
+  `X-Player-Token` enforcement lives only in `GameRoomController` on the five
+  mutating endpoints. No token gate is added here: the scope of what a caller
+  may read is the `roomId` it presents, and the additive card data only ever
+  reflects that room's own members' hands. Deliberately not changing the
+  room-layer auth model inside a UI step.
+
+A4 - backend test `RoomOpponentCardsTest` (4 tests, new file)
+- `liveHand`: PLAYER_TURN view = 2 player cards, `playerValue` 2-21, exactly
+  1 dealer card, `dealerValue` null.
+- `settledReveals`: after stand/round-over, `dealerCards` size >= 2 and
+  `dealerValue` numeric.
+- `nonBlackjack`: a minesweeper `/state` has no `blackjack` key on any player.
+- `preBet`: a blackjack room before any bet has no `blackjack` key.
+
+A5 - `OpponentPanel` (Blackjack.jsx) + compact card CSS (styles.css)
+- Opponents now derive from `/state`'s `players[]` (the `pollState` path), not
+  `/progress`, so the card projection is always present and can never be
+  clobbered by a progress payload that carries no cards.
+- `OpponentPanel` renders per opponent: name + balance, the 2 player cards, the
+  dealer row (face-up card only while live; full hand + value when settled), and
+  the opponent's phase. When `opp.blackjack` is null it falls back to
+  name + balance + phase (the old strip's information). The dealer hole card is
+  structurally unrenderable on an opponent's browser: it is not in the payload.
+- Appended `.playing-card--compact`, `.opponent-panel`, `.compact-cards-row`.
+
+A6 - frontend unit tests (Blackjack.test.jsx, +2 tests; 105 -> 107)
+- `renders an opponent face-up hand + dealer up-card, never the hole card`:
+  asserts THREE things in one test - (a) the opponent's 2 face-up cards + the
+  single dealer up-card render, (b) exactly 3 `.playing-card--compact` in the
+  panel so a dealer hole card cannot leak, and (c) `querySelectorAll('.opponent-
+  panel')` has length 1, i.e. the current player (who IS in the payload) gets
+  no panel.
+- `renders only name/balance/phase when an opponent has no card data`: a null
+  `blackjack` falls back to the text-only view.
+- Count note: 2 new `it()` blocks (one of them multi-assertion), hence +2, not +3.
+
+A7 - e2e B7 (two real browsers, `step6b.spec.ts`)
+- Two-player blackjack room. B is driven to PLAYER_TURN; A's `OpponentPanel` for
+  B shows B's 2-card hand and exactly ONE dealer card (hole hidden, no value).
+  B stands; the round settles; A's panel for B then shows the FULL dealer hand
+  (>= 2 cards). Confirms the reveal is server-driven and the hole card never
+  renders on the opponent's browser.
+
+### Part B - Create Room latency
+
+B1 - immediate /state on mount + lobby refetch/ready poll
+- Blackjack / Minesweeper / Game2048: the first `/state` now fires on mount
+  instead of waiting up to 1000ms for the first interval tick, so the room
+  phase (and, for blackjack, the opponent cards; for timed games, the countdown)
+  populate on the first frame.
+- RoomLobby: the ready overlay's `/state` now fires immediately on mount and
+  again right after readying (a `pollNowRef`), and the room list refetches after
+  create/join so the new room shows without waiting for the next 5s poll.
+- Test updates (intent preserved): `App.test.jsx` drops the transient
+  "Minesweeper Lobby" ready-overlay assertion (the overlay no longer lingers -
+  it hands off on the first poll) and keeps the handoff assertion;
+  `PollingResilience.test.jsx` bumps the `/state` call-count expectations by one
+  (the mount poll) with the single-transient-500 tolerance unchanged.
+
+B2 - DEFERRED (inline name input to replace `window.prompt`)
+- Five accepted regression tests (App.test.jsx: F1, F2, G1, solo-handoff, A3)
+  stub `window.prompt`. Replacing the prompt with an inline field + disabling
+  the buttons when the name is empty would require rewriting all five. Per the
+  stop-and-report rule ("if multiple jsdom tests depend on the prompt, stop and
+  report; it is a nice-to-have, not a blocker"), this is deferred, not
+  silently rewritten. B1 already meets the latency gate; the name prompt remains
+  a ~250-300ms synchronous gate on the Welcome card->lobby step only. Left for
+  a small follow-up.
+
+B3 - create-room-trace re-run (`E2E_REBUILD=1`)
+- Client-side gap (immediate `/state` -> game element rendered) is now ~4-40ms:
+  the MutationObserver render ticks show `.blackjack-table` in the DOM
+  ~immediately after the mount `/state` resolves.
+- form-submit -> "Get Ready" content: blackjack 99ms, minesweeper 79ms,
+  2048 70ms - all under 300ms.
+- Quick Play -> first game element: minesweeper 88ms, 2048 109ms, blackjack
+  385ms. The blackjack figure is dominated by the COLD first `POST /api/rooms`
+  after JVM boot (252ms server-side in that run; 349ms in the first run); every
+  warm create is 7-24ms (F-6d-2). Excluding that server warmup, the client
+  contribution is ~40ms - the client-side < 300ms gate is met.
+- submit -> room in friend's list stays ~5s: that is the friend's intentional
+  5s room-list poll (out of scope; the friend is already polling the list).
+
+### Side effect + queued follow-up (not done in this step)
+- F-6d-8 closure: sourcing the opponent panel from `/state` (1s poll, immediate
+  on mount) instead of `/progress` (2s poll) closes the <=2s stale opponent view
+  from F-6d-8 as a side effect - the view is now at most 1s stale and immediate
+  on mount.
+- Queued cleanup (NOT removed in 6e): the 2s `roomsApi.getRoomProgress` poll in
+  `Blackjack.jsx` is now redundant. Its only remaining use is
+  `if (progress.roomPhase) setRoomPhase(...)`; the 1s `/state` poll already
+  refreshes `roomPhase` (and owns the opponent cards). So the `/progress` poll
+  is effectively dead for blackjack and could be dropped in a follow-up. Left in
+  place for now: minesweeper/2048 still legitimately use `/progress` for
+  per-player score/boardsCleared/gameOver, and removing polling code without a
+  decided replacement is exactly the kind of change to isolate in its own step.
+
+### Verification
+- Backend: `mvn -pl games-backend test` -> Tests run: 263, 0 failures, 0 errors,
+  BUILD SUCCESS (259 baseline + 4 new `RoomOpponentCardsTest`).
+- Frontend: `npm test` -> 11 files, 107 tests, all passed.
+- E2E: `E2E_REBUILD=1 npm run e2e` -> 7 passed (B1-B7), ~1.5m.
+- `/state` is strictly additive (the live key-capture under A1 +
+  `RoomOpponentCardsTest` non-blackjack/preBet tests); pre-existing fields
+  unchanged.
+- No `@Disabled`; no weakened assertions; no new dependencies; no gameplay rule
+  changes; the dealer hole-card reveal rule is the pre-existing `snapshot()` one.
+
+Production files changed:
+- games-backend: `GameRoomService.java` (`extractBlackjackView` + `/state`
+  wiring), `RoomStateResponse.java` (`BlackjackView` + `PlayerState.blackjack`).
+- games-frontend: `Blackjack.jsx` (`OpponentPanel` + B1 mount poll),
+  `Minesweeper.jsx` and `Game2048.jsx` (B1 mount poll), `RoomLobby.jsx`
+  (B1 immediate/refetch/ready poll), `styles.css` (compact card + opponent panel).
+
+Tests changed/added:
+- `RoomOpponentCardsTest.java` (new, 4 tests), `Blackjack.test.jsx` (A6),
+  `App.test.jsx` + `PollingResilience.test.jsx` (B1 expectation updates),
+  `step6b.spec.ts` (B7).
