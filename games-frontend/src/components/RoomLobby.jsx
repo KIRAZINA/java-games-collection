@@ -220,19 +220,24 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [readySent, setReadySent] = useState(false);
   const pollRef = useRef(null);
-  // G1 (step 6b.2): this lobby owns the room membership until the room reaches
-  // PLAYING, so leaving the lobby (Home, another game tab, a remount) must
-  // leave the room too - App's own leave only knows about currentRoom, which
-  // is set later, when the game actually opens. handedOffRef marks the moment
-  // the game takes over so the leave below never fires on entering a game.
+  // G1 (step 6b.2): this lobby owns the room membership from create/join until
+  // the room reaches PLAYING - which is why it, and not App, has to leave the
+  // room when the player walks out (three cases on the effect below).
+  // handedOffRef marks the moment the game takes over.
   const handedOffRef = useRef(false);
 
+  // Three cases decide whether this leave runs - do not "simplify" it away:
+  //   1. handed off to the game (handedOffRef) -> the game owns the room from
+  //      here; leaving would abandon the match the moment it starts.
+  //   2. auth lost, token already cleared -> api.js/the 403 path cleaned up,
+  //      and /leave verifies X-Player-Token, so the request could only 403.
+  //   3. otherwise -> this lobby still owns the membership (Home, game switch,
+  //      remount): App's own leave only knows about currentRoom, which is set
+  //      later, when the game actually opens. Leave now.
   useEffect(() => {
     if (!activeRoomId) return undefined;
     return () => {
       if (handedOffRef.current) return;
-      // /leave verifies X-Player-Token: with no token the auth-loss path has
-      // already cleaned up, and the request could only 403.
       if (!getRoomToken(activeRoomId)) return;
       roomsApi.leaveRoom(activeRoomId, playerId).catch(() => {});
       clearRoomToken(activeRoomId);
