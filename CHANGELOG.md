@@ -1669,3 +1669,136 @@ response JSON shape changed; no assertion weakened or test removed.
   the waiting card / route multiplayer rooms through the ready overlay, vs.
   auto-ready semantics) and the `.ready-check-overlay` navigation lockout -
   both are product changes and therefore out of scope for 6b.1.
+
+---
+
+## STEP 6b.2 - start a multiplayer game from the UI (G1) and unblock the waiting overlay (G2)
+
+Prerequisite state: 6b.1 closed F1-F6 but left four scenarios red on two
+product gaps, reported verbatim and handed back for a decision. The curator
+chose: **(1) stay in `RoomLobby` until `PLAYING`** for the ready affordance,
+and **(2) let the backdrop pass clicks through** for the lockout. Both are
+implemented here; no gameplay rule, no response shape and no assertion was
+changed to get there.
+
+### G1 - multiplayer rooms wait in the lobby for the ready step - `9e1bcb9`
+
+`RoomLobby.handleCreateRoom` / `handleJoinRoom` sent every non-solo-non-blackjack
+room straight to `onEnterGame`, i.e. into the game component's waiting card
+(`Minesweeper.jsx:215-221`, same in `Game2048`/`Blackjack`) - which renders
+`h2 "Waiting for players"` + a spinner and **no button**. The only call to
+`roomsApi.markReady` in the whole frontend is `RoomLobby.jsx:165`, inside
+`ReadyCheckOverlay`. Net effect: a multiplayer game could never be started from
+the UI, in any room type.
+
+Both call sites now set `activeRoomId` and let the existing phase poll
+(`RoomLobby.jsx:283-289`) hand off to `onEnterGame` when it sees
+`PLAYING`/`GAME_OVER`. Only the solo blackjack shortcut still enters directly
+(those rooms are created already `PLAYING` and have no ready step).
+
+**Ownership consequence (not optional):** App's leave paths (`handleGoHome`,
+`handleConfirmNavigation`) act on `currentRoom`, which is only set by
+`handleEnterGame` - i.e. *after* the hand-off. While waiting, the lobby is the
+sole owner of the membership, so it must also own leaving it:
+
+- an effect keyed on `activeRoomId` calls `leaveRoom` + `clearRoomToken` when
+  the lobby unmounts (Home, game switch, remount) - skipped once `handedOffRef`
+  is set by the poll, and skipped when no token remains (the auth-loss path
+  already cleaned up, and `/leave` verifies `X-Player-Token`);
+- an effect keyed on `gameKey` drops `activeRoomId`, so switching games while
+  waiting does not keep the old room's overlay under the new game's lobby.
+
+B6's own assertion proves this path: `only B's room may disappear`
+(`step6b.spec.ts:425-429`) requires `leaveRoom` to run on Home, and empty rooms
+are removed server-side (`GameRoomService.leaveRoom`, `rooms.isEmpty()` ->
+`rooms.remove`).
+
+**Test that proves it:** `src/test/App.test.jsx` - "a multiplayer room waits in
+the lobby for the ready step / opens the room ready overlay, never the game
+component waiting card". A multiplayer create (asserted via
+`settings.isSinglePlayer === false`) must surface `I'm Ready!` (which only
+renders for `roomPhase === 'LOBBY'`) and must not surface the game's
+`Waiting for players`. Against the pre-G1 `RoomLobby.jsx` (verified by
+`git stash`) it fails with
+`Unable to find role="button" and name "I'm Ready!"`.
+
+### G2 - the waiting overlay no longer swallows clicks - `9e1bcb9`
+
+`.ready-check-overlay` is `position: fixed; inset: 0; z-index: 200`
+(`styles.css:409`), so it covered the sidebar and intercepted every click
+while a room waited - that was B6's failure
+(`<div class="ready-check-overlay"> ... subtree intercepts pointer events`,
+57 retries on `← Home`). The dim layer is now `pointer-events: none` and only
+`.ready-check-card` is `pointer-events: auto`, so the card stays interactive
+while Home and the game tabs underneath remain clickable.
+
+### Test-side adaptations (documented, not weakened)
+
+- **Nine pre-game assertions** in `e2e/step6b.spec.ts` (B2 `:130/:141`, B3
+  `:227/:237`, B5 `:357`, B6 `:393/:408/:412/:436`) now expect
+  `getByText('Get Ready')` instead of `Waiting for players`, because a
+  multiplayer room reaches `RoomLobby`'s overlay rather than the game card.
+  **Stricter, not weaker:** `Get Ready` (`RoomLobby.jsx:185`) only renders once
+  the server really reports `roomPhase === 'LOBBY'`, and it does not match the
+  `READY_CHECK` heading (`"Get Ready!"`), which the old card text did not
+  distinguish. The file header records this reasoning.
+- **`NetworkAndDoubleClick.test.jsx` "double-click Join"**: the resolved join
+  no longer re-renders the same list row (it hands the room over to the ready
+  overlay), so the post-resolution busy check is now
+  `findByRole("I'm Ready!")` instead of `joinButton` re-enabling. The
+  `joinRoom` call-count assertions - the point of the test - are unchanged and
+  still asserted twice; the room state is stubbed to `LOBBY` so the overlay is
+  deterministic. The mock also gained `getRoomToken`, which `RoomLobby`'s
+  leave-on-unmount now reads.
+- **B3's API-created owner readies** (`step6b.spec.ts:240-248`): the room is
+  created through the API because the UI's Time Limit select cannot produce the
+  spec's 8s room, and the API-created owner occupies a real slot - the list
+  shows `1/3 players` before the first UI join. `allPlayersReady()` counts
+  **every present player** (`GameRoom.java:60`), so an owner with no browser to
+  press `I'm Ready!` left the room in `LOBBY` forever (B3 first hit this after
+  F4 made room creation succeed). The scenario now readies the owner through
+  `POST /ready` with the token from the create response, once both UI players
+  have joined - exactly what a third player would do - and asserts `200`.
+
+### Re-run results (raw)
+
+- `npx vitest run` -> **9 files, 90 tests passed**
+  (`%TEMP%\step6b2\vitest-6b2.txt`). Arithmetic: 89 after 6b.1 + 1 new G1
+  guard = 90; no test removed.
+- `mvn test -pl games-backend` -> **Tests run: 255, Failures: 0, Errors: 0,
+  Skipped: 0 / BUILD SUCCESS**, 01:12 min (`%TEMP%\step6b2\mvn-6b2.txt`).
+  Unchanged: no backend file was touched in 6b.2.
+- `npm run e2e` -> **6 passed (1.3m)** (`%TEMP%\step6b2\e2e-final.txt`):
+
+  | scenario | after 6b.1 | after 6b.2 |
+  | --- | --- | --- |
+  | B1 quick-play Blackjack round | passed | **passed** (3.3s) |
+  | B2 two-player Minesweeper | failed `:138` (no Ready button) | **passed** (10.0s) |
+  | B3 two-player 2048, 8s settle | failed `:234` (no Ready button) | **passed** (15.3s) |
+  | B4 backend restart mid-game | passed | **passed** (10.4s) |
+  | B5 token loss | failed `:354` (no Ready button) | **passed** (5.7s) |
+  | B6 two-tab isolation | failed `:406` (overlay blocked Home) | **passed** (2.9s) |
+
+  This is the Part B acceptance criterion from `STEP_6b.md:131` - "Raw
+  `npm run e2e` output showing B1-B6 green" - now met.
+
+### Files touched in Step 6b.2 (scope proof)
+
+- `games-frontend/src/components/RoomLobby.jsx` (G1 routing, leave ownership)
+- `games-frontend/src/styles.css` (G2 pointer-events)
+- `games-frontend/src/test/App.test.jsx` (new G1 guard: 2 -> 3 tests here;
+  suite total 89 -> 90)
+- `games-frontend/src/test/NetworkAndDoubleClick.test.jsx` (mock export +
+  join-hand-off adaptation)
+- `games-frontend/e2e/step6b.spec.ts` (nine assertion texts + B3 owner ready)
+- `CHANGELOG.md` (this section)
+
+No production dependency added; no gameplay rule changed; no successful-
+response JSON shape changed; no assertion removed, relaxed or skipped.
+
+### Still deferred
+
+- `winnerId` / `winnerScore` exposure from `settleGame` (B3's "and a winner",
+  `STEP_6b.md:86`): `GameRoom` already computes both (`getWinnerId`,
+  `getWinnerScore`), but no response DTO or UI element exposes them - the
+  reported finding from Part B, unchanged by 6b.1/6b.2.
