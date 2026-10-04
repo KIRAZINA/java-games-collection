@@ -1942,3 +1942,146 @@ with the failure recorded above.
 
 - Nothing from the 6b.2 deferred list remains. Remaining pre-ship work is
   part **B** of the curator decision: assess and execute the Render deploy.
+
+## STEP 6c - black-and-orange theme + author attribution
+
+Palette-and-attribution pass issued by the curator: colors plus one attribution
+block, nothing else. No component moved, no flow changed, no dependency added,
+no test file touched. 8 files modified + 1 new component; +246/-136 lines
+(styles.css accounts for 278 of them).
+
+### Palette (defined at `:root` in styles.css)
+
+| Token | Hex | Role |
+|---|---|---|
+| `--bg` | `#0d0d0d` | page background, near-black |
+| `--surface` | `#1a1a1a` | cards, panels, hand-panels, room rows, sidebar, modals |
+| `--surface-2` | `#262626` | elevated surfaces, secondary button base, hovered rows |
+| `--surface-3` | `#333333` | inputs, insets, notices, phase pill |
+| `--border` | `#2e2e2e` | default border |
+| `--border-strong` | `#444444` | emphasis border, hover border, opponent-strip rule |
+| `--primary` | `#ff6b1a` | primary actions, links, focus ring, winner line |
+| `--primary-hover` | `#ff8c42` | hover |
+| `--primary-dim` | `#cc5514` | pressed |
+| `--text` | `#f5f5f5` | primary text (~16:1 on `--bg`) |
+| `--text-muted` | `#b0b0b0` | secondary/meta text (8:1 on `--surface`) |
+| `--text-dim` | `#8a8a8a` | footer, disabled (**raised from the prescribed `#6f6f6f`** - see below) |
+| `--success` | `#4ade80` | win, positive balance flash, Next Board |
+| `--danger` | `#ef4444` | errors, loss flash, destructive confirm |
+| `--warning` | `#fbbf24` | bankruptcy banner |
+| `--content-ink` | `#1d2633` | ink on light game content (card faces, tile numerals) - the one token beyond the prescribed list |
+
+`color-scheme: light` -> `dark` (form controls and scrollbars follow).
+
+### Application rules
+
+- Primary buttons (Place Bet, Hit, Stand, New Round, Create Room + its modal
+  submit, I'm Ready!, Quick Play x2, Join) wear one new `.btn-primary` class:
+  `--primary` background, `#0d0d0d` text (black on orange, ~7.4:1), with real
+  hover (`--primary-hover`), pressed (`--primary-dim`) and disabled
+  (`--surface-3`/`--text-dim`) states - a class instead of per-button inline
+  styles so disabled Join buttons keep reading as disabled. The old blue/green
+  inline styles on those buttons were removed in favour of the class.
+- Secondary buttons (Home, Refresh, Cancel, Exit, New Session, New Board,
+  Reset, move pad, tab toggles, multiplayer Play X) take the rethemed default
+  button style (`--surface-2`/`--text`/`--border`).
+- Active nav tab: `--primary` background, `--bg` text (orange is emphasis; the
+  active-tab state is one element, not every border).
+- Links `--primary`, hover `--primary-hover`; `:focus-visible` outline
+  `--primary` was added for buttons/inputs/selects/links (none existed).
+- Headers `--text`; meta (eyebrow, room counts, Waiting..., countdown text,
+  balance label, "Playing as") `--text-muted`; `.error-line` ->
+  `--danger` on `--surface-2`; `.winner-line` -> `--primary` (A1 rule);
+  `.timer-display` keeps brand emphasis (`--primary` border+text, urgent stays
+  `--danger`); `.locked-banner` -> `--warning` on `--surface-2`.
+- **Notification toast: retinted, neither blue nor orange** (spec allowed
+  keeping blue or a warm variant and required a documented pick): neutral
+  elevated `--surface-3` + `--border-strong` + `--text`. The blue-tinted
+  `opponentAlert` strips in Minesweeper/Game2048 got the same neutral
+  treatment; the Blackjack bankruptcy banner went to `--warning`.
+- Balance flash keyframes (green/red) retargeted to `--success`/`--danger`;
+  their glow tints use `color-mix(in srgb, ... 25-30%, transparent)` instead of
+  hardcoded rgba - the flash still works, now on-token.
+- Minesweeper "Next Board" keeps its semantic green as `--success` (black text,
+  12:1): it is win feedback, not a primary action.
+
+### Contrast fixes made in the same pass (spec: fix sub-4.5:1 pairs)
+
+1. **`--text-dim` raised `#6f6f6f` -> `#8a8a8a`.** The prescribed `#6f6f6f`
+   lands at ~3.4:1 on `--surface` and ~3.8:1 on `--bg` - under 4.5:1, and the
+   prescribed `.site-footer` uses it for body-size text. `#8a8a8a` gives
+   ~5.0:1 on `--surface`. This is the single deliberate deviation from the
+   issued palette.
+2. **2048 tile numerals**: white on the pastel/gold inline ladder was under
+   3:1 (large text needs 3:1). All `.value-*` groups now use
+   `--content-ink` (>=3:1 on every tile, verified worst case ~5.5:1); the
+   `.value-1024/2048` fallback pair is now `--primary` bg + `--bg` text.
+3. **Playing-card faces stay light** (game content) but now set
+   `color: var(--content-ink)` explicitly - `:root` text became near-white,
+   which would have been invisible on a white card.
+
+### Attribution
+
+New `src/components/SiteFooter.jsx` (committed in full with this step),
+rendered as the last child of `.game-nav` - the sidebar every screen renders -
+so it is present on Welcome, the lobby, all three game views and beneath both
+overlays (both dim layers are translucent, footer remains visible):
+
+```jsx
+<footer role="contentinfo" className="site-footer">
+  <span>Built by </span>
+  <a href="https://github.com/KIRAZINA" target="_blank" rel="noopener noreferrer">KIRA_ZINA</a>
+</footer>
+```
+
+`.site-footer { margin-top: auto; color: var(--text-dim); font-size: 0.78rem;
+padding: 0.75rem 0 0; }` + link rules (`--primary`, hover underline). The
+"Playing as" line lost its inline `margin: auto 0 0` (now `margin: 0`) so the
+two bottom items don't split the free space - the line still sits directly
+above the pinned footer. Not `position: fixed`, so it cannot intercept game
+clicks (the G2 lesson).
+
+### Replacement report (every hardcoded color, by file)
+
+| File | Replacements |
+|---|---|
+| `styles.css` | every chrome literal -> variable: `:root` bg/text, button base/hover/disabled + `#3466a8`/`#f3f7fd`, input/select, `.game-nav`, `.eyebrow`, `.nav-buttons .active` (`#243e68`), `.game-header` + phase pill (`#e8f0dd`/`#314b1d`), `.toolbar label`, `.error-line` (`#b42318`/`#fff1f0`/`#842019`), `.error-boundary`, `.status-strip span`, `.hand-panel`, `.hand-title span` (`#246456`), `.playing-card` border + `.empty`, `.mines-grid` frame, `.board-2048`, `.tile-2048`, `.value-1024/2048` blue, tile numeral whites, `.timer*` (`#243e68`/`#d32f2f`/`#ffebee`), `.winner-line` (`#1b5e20`), ready overlay/card/button/spinner/countdown (all `#243e68` blues), `.locked-banner` (`#fff3e0`/`#e65100`/`#bf360c`), `.card-back` blue gradient, `flashGreen`/`flashRed`/`scoreFlash`/`pulseRed` keyframes, `.balance-display` trio, mobile `.game-nav` border; added `.btn-primary`, focus-visible, `a` rules, `.site-footer` |
+| `App.jsx` | "Playing as" `#607088` -> `--text-muted`; margin fix; SiteFooter import + render |
+| `Welcome.jsx` | subtitle `#526174` -> `--text-muted`; section h3s `#243e68`/`#526174` -> `--text`; 3 quick-play buttons blue trio -> `.btn-primary` |
+| `Blackjack.jsx` | notification toast blue trio -> neutral; bankruptcy banner orange trio -> `--warning`/`--surface-2`; opponent strip `#3466a8` -> `--border-strong`/`--text`; countdown `#607088` -> `--text-muted`; New Round/Place Bet/Hit/Stand -> `.btn-primary` |
+| `ConfirmNavigationModal.jsx` | scrim 0.35 -> 0.6; card `#fff`/`#dce3ec` -> `--surface`/`--border`; h3 `#bf360c` -> `--danger`; body `#333` -> `--text`; confirm button -> `--danger` bg + `--bg` text (5.5:1) |
+| `Game2048.jsx` | opponent notice blue trio -> neutral; opponent strip -> `--border-strong`/`--text`; empty-tile fallback `#3c3a32` -> `--surface-3`. `TILE_COLORS` untouched (content) |
+| `Minesweeper.jsx` | opponent notice blue trio -> neutral; opponent strip -> vars; Next Board `#1b5e20`/`#fff` -> `--success`/`--bg` |
+| `RoomLobby.jsx` | scrim 0.35 -> 0.6; modal card -> `--surface`/`--border`; 10 form labels `#526174` -> `--text-muted`; Create Room (modal + toolbar), Quick Play (old green), Join -> `.btn-primary`; empty-rooms + room meta `#607088` -> `--text-muted`; room rows `#d6deea`/`#fff` -> `--border`/`--surface` |
+| `index.html`, `main.jsx`, `ErrorBoundary.jsx`, tests | no color literals - no replacements needed |
+
+### Literals deliberately NOT replaced (kept, with reasons)
+
+| Location | Literal(s) | Why kept |
+|---|---|---|
+| `Game2048.jsx:7-18` | `TILE_COLORS` ladder `#cdc1b4`...`#edc22e` | game content: tile values are read by contrast against these backgrounds; retheming them would change gameplay visuals |
+| `styles.css` `.value-2..512` | fallback backgrounds | mirror of the same ladder for the CSS fallback path (inline styles win at runtime) |
+| `styles.css` `.mine-cell*` | `#e9edf2`, `#9db2c9`, `#f8fafc`, `#f4b4a8`, `#1d3150` | minesweeper cell-state semantics: covered/opened/flagged/wrong-flag must stay distinguishable |
+| `styles.css` `.playing-card` | `#ffffff`/`#f7f2e8` gradient, suit `#6b2632` | physical card face (content) with its suit ink |
+| `styles.css` `.tile-ice-block` | blue-gray gradient, `#b0d0e8`, inset white | ice power-up skin - game effect, not chrome |
+| `styles.css` | `rgba(25,35,50,.08)`, `rgba(0,0,0,.3)`, `rgba(255,255,255,.4)` | box-shadow tints, not palette colors |
+| `styles.css`/modals | `rgba(0,0,0,0.65)` ready overlay, `rgba(0,0,0,0.6)` both modal scrims | intentional dark scrims (spec allows the ready dim to go darker; modal scrims standardized 0.35 -> 0.6) |
+
+### Verification (raw)
+
+- `npx vitest run` -> **Test Files 11 passed (11), Tests 105 passed (105)**
+  (colors are not asserted; regression check - same 105 as 6b.3).
+- `npm run build` -> succeeded:
+  `dist/index.html 0.39 kB`, `dist/assets/index-D9ap-U1r.css 11.67 kB (gzip 3.24 kB)`,
+  `dist/assets/index-Y1u4sbPv.js 183.83 kB (gzip 56.08 kB)`, `built in 152ms`.
+- `npm run e2e` -> **6 passed (1.1m)** (`%TEMP%\step6c\e2e-6c.txt`). Jar was
+  current (built 17:01, last backend edit 16:52) and the change is CSS-only, so
+  per the 6b.3 standing rule no `E2E_REBUILD=1` was needed.
+- Six screenshots in `games-frontend/e2e-report/screenshots/` (gitignored
+  artifact dir): `welcome.png`, `blackjack-player-turn.png`,
+  `minesweeper-playing.png`, `2048-playing.png`, `room-list.png`,
+  `ready-overlay.png`. Captured with a throwaway temp script that reuses the
+  e2e global-setup/teardown harness - no in-repo file, no new dependency.
+  `welcome.png` is the representative acceptance shot (verified: black page,
+  orange quick-play primaries with black text, muted subtitle, attribution
+  footer pinned at the sidebar bottom).
