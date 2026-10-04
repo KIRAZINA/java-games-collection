@@ -50,7 +50,37 @@ export function extractRoomIdFromPath(path) {
 function tokenForPath(path) {
   const roomId = extractRoomIdFromPath(path);
   if (!roomId) return undefined;
-  return roomTokens[roomId];
+
+  const cached = roomTokens[roomId];
+  if (!cached) return undefined;
+
+  // F3: reconcile with sessionStorage on every request. The in-memory map is
+  // only a cache and must not outlive the store: a same-tab
+  // sessionStorage.clear() fires no `storage` event, so a stale entry would go
+  // on sending X-Player-Token and the app could never observe the 403 it needs
+  // to recover from. The store is authoritative when it is readable; if it is
+  // not readable at all (storage disabled) the cache is kept rather than
+  // silently dropping auth on every request.
+  let stored;
+  try {
+    const raw = sessionStorage.getItem(ROOM_TOKENS_STORAGE_KEY);
+    if (raw === null) {
+      roomTokens = {};
+      return undefined;
+    }
+    const parsed = JSON.parse(raw);
+    stored =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed[roomId] : undefined;
+  } catch {
+    return cached;
+  }
+
+  if (!stored) {
+    delete roomTokens[roomId];
+    return undefined;
+  }
+  if (stored !== cached) roomTokens[roomId] = stored;
+  return stored;
 }
 
 export async function api(path, options = {}) {

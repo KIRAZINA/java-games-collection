@@ -3,10 +3,15 @@ import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import App from '../App.jsx';
 import { RoomLobby } from '../components/RoomLobby.jsx';
-import { getRoomToken, rehydrateRoomTokens } from '../api/api.js';
+import { getRoomToken } from '../api/api.js';
 
-// NOTE: uses the real api.js pipeline — 403 must reach err.status so the lobby
+// NOTE: uses the real api.js pipeline - 403 must reach err.status so the lobby
 // can distinguish an expired token from any other failure.
+//
+// F3 (step 6b.1): sessionStorage is now consulted on every request, so a
+// same-tab clear() is enough to stop X-Player-Token going out. The old
+// rehydrateRoomTokens() workaround in beforeEach is gone: it is exactly what
+// hid the bug (it re-seeded the memory cache right after clearing the store).
 
 const NOTICE = 'Invalid or missing player token. Please rejoin the room.';
 
@@ -34,10 +39,14 @@ const soloRoom = {
   isSinglePlayer: true,
 };
 
+let sentTokens;
+
 function stubBackend() {
+  sentTokens = [];
   vi.stubGlobal('fetch', vi.fn(async (url, init = {}) => {
     const method = init.method ?? 'GET';
     const target = String(url);
+    sentTokens.push({ target, token: (init.headers ?? {})['X-Player-Token'] });
     if (method === 'POST' && target.includes('/join')) {
       return mkResponse(200, {
         roomId: 'r-1',
@@ -56,10 +65,13 @@ function stubBackend() {
   }));
 }
 
+function tokenOfRequest(fragment) {
+  return sentTokens.find((r) => r.target.includes(fragment));
+}
+
 describe('Area 5 - token loss sends the player back to the lobby with a rejoin notice', () => {
   beforeEach(() => {
     sessionStorage.clear();
-    rehydrateRoomTokens();
   });
 
   afterEach(() => {
@@ -76,7 +88,7 @@ describe('Area 5 - token loss sends the player back to the lobby with a rejoin n
     expect(alert).toHaveTextContent(NOTICE);
   });
 
-  it('403 on markReady drops the stale token, returns to the room list, and reports auth loss', async () => {
+  it('sessionStorage.clear() stops the token being sent - 403 on markReady drops it and returns to the lobby', async () => {
     const user = userEvent.setup();
     stubBackend();
     const onAuthLost = vi.fn();
@@ -91,11 +103,24 @@ describe('Area 5 - token loss sends the player back to the lobby with a rejoin n
     );
 
     await user.click(await screen.findByRole('button', { name: 'Join' }));
+    expect(getRoomToken('r-1')).toBe('tok-abc');
+
+    // The store is wiped at runtime; no `storage` event fires in this tab.
+    sessionStorage.clear();
+    expect(sessionStorage.getItem('roomTokens')).toBeNull();
 
     const readyButton = await screen.findByRole(
       'button', { name: "I'm Ready!" }, { timeout: 3000 }
     );
+    sentTokens.length = 0;
     await user.click(readyButton);
+
+    const readyRequest = tokenOfRequest('/ready');
+    expect(readyRequest, 'the ready request was sent').toBeTruthy();
+    expect(
+      readyRequest.token,
+      'X-Player-Token must be omitted once sessionStorage no longer has it'
+    ).toBeUndefined();
 
     await waitFor(() => expect(onAuthLost).toHaveBeenCalledWith(NOTICE));
     expect(getRoomToken('r-1')).toBeUndefined();
@@ -112,10 +137,18 @@ describe('Area 5 - token loss sends the player back to the lobby with a rejoin n
     await user.click(screen.getByRole('tab', { name: /Minesweeper/ }));
     await user.click(await screen.findByRole('button', { name: 'Join' }));
 
+    expect(getRoomToken('r-1')).toBe('tok-abc');
+    sessionStorage.clear();
+
     const readyButton = await screen.findByRole(
       'button', { name: "I'm Ready!" }, { timeout: 3000 }
     );
+    sentTokens.length = 0;
     await user.click(readyButton);
+
+    const readyRequest = tokenOfRequest('/ready');
+    expect(readyRequest, 'the ready request was sent').toBeTruthy();
+    expect(readyRequest.token, 'cleared storage must not be resurrected from memory').toBeUndefined();
 
     const alert = await screen.findByRole('alert', {}, { timeout: 3000 });
     expect(alert).toHaveTextContent(NOTICE);
