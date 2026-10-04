@@ -162,7 +162,13 @@ function ReadyCheckOverlay({ roomId, playerId, roomPhase, timeRemaining, onReady
     setReadyBusy(true);
     setReadyError('');
     try {
-      await roomsApi.markReady(roomId, playerId);
+      const result = await roomsApi.markReady(roomId, playerId);
+      // Token rotation (Step 6b.3): ready invalidates the token this request
+      // authenticated with and returns the replacement. Store it before
+      // anything else can fire an authenticated call - the game registers its
+      // session the moment the match starts, and this lobby's own leave uses
+      // the same stored token.
+      if (result?.playerToken) setRoomToken(roomId, result.playerToken);
       setReadySent(true);
       onReadySent?.();
     } catch (err) {

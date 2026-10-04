@@ -2,7 +2,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import App from '../App.jsx';
-import { roomsApi } from '../api/api.js';
+import { roomsApi, getRoomToken, rehydrateRoomTokens } from '../api/api.js';
 
 // Step 6b.1 regression guards. playerId and the quick-play owner name are only
 // observable on the wire, so both tests capture them from createRoom.
@@ -179,5 +179,50 @@ describe('solo non-blackjack rooms hand off from the lobby to the game', () => {
 
     // case 1 of the ownership effect: handing off must not abandon the room
     expect(leaveRoom).not.toHaveBeenCalled();
+  });
+});
+
+describe('A3 - ready rotates the stored player token', () => {
+  it('swaps the issued token for the one POST /ready returns', async () => {
+    const user = userEvent.setup();
+    sessionStorage.clear();
+    rehydrateRoomTokens();
+
+    vi.spyOn(roomsApi, 'createRoom').mockResolvedValue({
+      roomId: 'r-rotate',
+      playerToken: 'tok-before',
+      isSinglePlayer: false,
+    });
+    vi.spyOn(roomsApi, 'getRoomState').mockResolvedValue({
+      roomPhase: 'LOBBY',
+      timeRemaining: 30,
+      players: [],
+      playerCount: 1,
+    });
+    vi.spyOn(roomsApi, 'markReady').mockResolvedValue({ playerToken: 'tok-after' });
+    vi.stubGlobal('prompt', vi.fn(() => 'Alice'));
+    stubNetwork();
+
+    render(<App />);
+    await user.click(screen.getByRole('button', { name: /Play Minesweeper/ }));
+    await user.click(screen.getByRole('button', { name: '+ Create Room' }));
+    await user.type(screen.getByLabelText('Room Name'), 'Rotate Room');
+    await user.click(screen.getByRole('button', { name: 'Create Room' }));
+
+    // create stores the issued token, which is what ready authenticates with
+    expect(getRoomToken('r-rotate')).toBe('tok-before');
+
+    const ready = await screen.findByRole('button', { name: "I'm Ready!" }, { timeout: 4000 });
+    await user.click(ready);
+
+    // ...and the rotation response replaces it. Everything that runs after the
+    // ready click - session registration when the match starts, the lobby's own
+    // leave - authenticates with the stored value, so dropping it here would
+    // 403 the player the moment the game begins.
+    await waitFor(() => expect(getRoomToken('r-rotate')).toBe('tok-after'));
+    expect(roomsApi.markReady).toHaveBeenCalledTimes(1);
+
+    sessionStorage.clear();
+    rehydrateRoomTokens();
   });
 });
