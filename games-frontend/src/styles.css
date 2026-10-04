@@ -177,6 +177,23 @@ select {
   padding: 10px 12px;
 }
 
+/* ErrorBoundary fallback (Step 6b.3): replaces the whole app shell when a
+   render throws, so it has to stand on its own inside #root. */
+.error-boundary {
+  max-width: 460px;
+  margin: 48px auto;
+  padding: 28px;
+  text-align: center;
+  background: #fff;
+  border: 1px solid #dce3ec;
+  border-radius: 10px;
+}
+
+.error-boundary .error-line {
+  margin: 14px 0;
+  text-align: left;
+}
+
 .status-strip {
   display: flex;
   flex-wrap: wrap;
