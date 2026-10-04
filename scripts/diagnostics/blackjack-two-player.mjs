@@ -186,7 +186,7 @@ async function main() {
     await pageB.getByRole('button', { name: 'Play Blackjack' }).click();
     const row = pageB.locator(`div:has(> strong:text-is("${roomName}"))`);
     await row.waitFor({ timeout: 20000 });
-    await row.getByRole('button', { name: 'Join' }).click();
+    await row.locator('..').getByRole('button', { name: 'Join' }).click();
     await pageB.getByText('Get Ready', { exact: true }).waitFor({ timeout: 15000 });
 
     // ---- D3: phase transitions -------------------------------------------
