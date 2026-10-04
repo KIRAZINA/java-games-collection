@@ -1370,3 +1370,98 @@ annotation was added there (documented, not skipped silently).
 
 No successful-response JSON shape changed; no existing validation changed or
 test removed/weakened; no gameplay logic touched.
+
+### Part B - real-browser Playwright e2e (B1-B6): 1 passed, 5 failed
+
+Raw `npm run e2e` output: `%TEMP%\step6b\e2e-final.txt`. HTML report:
+`games-frontend/e2e-report/index.html` (`npx playwright show-trace
+games-frontend/e2e-report/trace/<id>.zip` per failure). 6 tests, 1 worker,
+chromium, `Running 6 tests` -> `1 passed | 5 failed (1.3m)`.
+
+| scenario | result | time | failure locus |
+| --- | --- | --- | --- |
+| B1 quick-play Blackjack round | **passed** | 2.1s | - |
+| B2 two-player Minesweeper (two pages) | failed | 15.8s | `step6b.spec.ts:133` - pageB never reached the post-join lobby |
+| B3 two-player 2048, 8s settle | failed | 0.09s | `step6b.spec.ts:201` - room creation returned 400 |
+| B4 backend restart mid-game | failed | 15.4s | `step6b.spec.ts:279` - quick play never reached the board |
+| B5 token loss | failed | 18.1s | `step6b.spec.ts:361` - "I'm Ready!" never rendered |
+| B6 two-tab isolation | failed | 0.97s | `step6b.spec.ts:403` - first room missing from the list |
+
+Root causes (reported, **not fixed** - the step constraint is zero production
+code fixes in the B series):
+
+- **B2 / B6 - shared identity `"p"` in every tab**:
+  `App.jsx:27` is `const [playerId] = useMemo(() =>
+  \`player-...\`, [])` - bracket-destructuring a *string* yields the string's
+  first character, so `playerId === "p"` for every page, tab and context.
+  Both pages therefore act as one player: a second `POST /join` (B2) or a
+  second `POST /rooms` (B6) first calls `leaveRoom("p")`, which empties the
+  first room and deletes it, so B's join 404s / A's room vanishes from the
+  list. Verified in-browser by dumping the React fiber (`props.playerId="p"`)
+  and by capturing the request bodies (`"ownerId":"p"`, `"playerId":"p"`).
+  Introduced in `7cecf8c` (2026-06-10); jsdom never sees it because every
+  jsdom test passes `playerId` as an explicit prop.
+- **B3 - test-side payload defect (Part A validation working as designed)**:
+  the API-created room sent `maxPlayers`/`timeLimitSeconds` at the top level
+  with `settings: {}`, and `GameSettings.maxPlayers` is a primitive `int`
+  that defaults to 0 -> `@Min(1)` -> `400 {"error":"settings.maxPlayers:
+  must be greater than or equal to 1","status":400}`. The nested `settings`
+  object must carry `maxPlayers`. No product change needed.
+- **B4 - quick play sends an empty `ownerName`**:
+  `App.jsx:112-116` prompts for the display name and calls
+  `setPlayerName(...)`, then synchronously continues to `createRoom` with the
+  still-empty closure value -> `"roomName":"'s Practice","ownerName":""` ->
+  Part A's `@NotBlank(ownerName)` -> `400 {"error":"ownerName: must not be
+  blank","status":400}` -> the catch path returns to the room list ("2048
+  Lobby, 0 room(s)"), so `#g2048-up` never renders. B1 passes only because it
+  clicks a game card first, which commits the name before Quick Play runs.
+  Pre-Part-A this path silently created a room with an empty owner name
+  (201); the validation change turned a latent frontend bug into a hard
+  failure.
+- **B5 - the spec's steps are unreachable in a real browser**:
+  (a) single-player rooms are created already in `PLAYING`
+  (`GameRoomService.createRoom` marks the owner ready + `startGame`), and
+  `ReadyCheckOverlay` - the only home of "I'm Ready!" (`RoomLobby.jsx:188`) -
+  renders solely while `roomPhase === "LOBBY"`, which starts `null` and polls
+  straight to `PLAYING`; (b) `api.js:4-28` caches `roomTokens` in module
+  scope, so `sessionStorage.clear()` does not strip the header - the next
+  poll still returns **200 with `X-Player-Token`**, never the 403 the spec
+  expects. Both diagnostics are asserted in the test as annotations.
+- **B3 (finding, not a failure)**: `settleGame()` computes
+  `winnerId/winnerScore` but no response DTO or UI element exposes them, so
+  "and a winner" has nothing to assert.
+
+**jsdom-passed-but-browser-failed - yes, three concrete cases** (this is the
+point of the B series): 1) the `playerId === "p"` destructuring bug (jsdom
+injects `playerId` props; `App.jsx` is never exercised for it); 2) solo rooms
+auto-starting `PLAYING`, which makes the Ready overlay disappear
+(`TokenLoss.test.jsx:53` stubs `GET /state` as `LOBBY`); 3) the module-scope
+token cache defeating `sessionStorage.clear()`
+(`TokenLoss.test.jsx:61-62` re-hydrates explicitly after clearing).
+Everything else (B1's full blackjack round, console.error-free operation,
+real-browser polling) matched jsdom.
+
+Harness fixes required before the suite could run at all (test infrastructure,
+no production code): `global-setup.mjs` now exports a default function
+(Playwright 1.63 rejects a side-effect-only file) and launches `npm.cmd`
+through `cmd.exe` (Node 24 returns `EINVAL` for `.cmd` via `spawnSync`);
+`global-teardown.mjs` likewise exports a function and `return`s instead of
+`process.exit(0)`.
+
+Known gap reported with this run: `npm test` (vitest) now collects
+`e2e/step6b.spec.ts` and fails with "Playwright Test did not expect test() to
+be called here" - the jsdom suite itself is green (`npx vitest run src` ->
+8 files, **87 passed**). One-line fix proposed (exclude `e2e/**` from the
+vitest include), **not applied** pending curator direction.
+
+### Files touched in Step 6b Part B (scope proof)
+
+- `games-frontend/package.json`, `package-lock.json` (`@playwright/test`
+  1.63.0 devDependency), `.gitignore` (Playwright artifacts)
+- `games-frontend/playwright.config.ts`, `e2e/global-setup.mjs`,
+  `e2e/global-teardown.mjs`, `e2e/serve-dist.mjs` (harness)
+- `games-frontend/e2e/step6b.spec.ts` (B1-B6, 427 lines)
+- `docs/step-specs/STEP_6b.md` (canonical spec)
+- `CHANGELOG.md` (this section)
+
+No production code was changed in Part B.
