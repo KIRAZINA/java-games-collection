@@ -99,6 +99,9 @@ function killPid(pid) {
 }
 
 // ---- 1. backend ---------------------------------------------------------
+// Playwright >= 1.4x requires the file to export a single function, so the
+// whole sequence below runs inside the default export.
+export default async function globalSetup() {
 let backendPort;
 let backendOwned;
 if (await backendHealthy(8080)) {
@@ -124,8 +127,15 @@ if (!(await backendHealthy(backendPort))) {
 // ---- 2. frontend build ---------------------------------------------------
 if (process.env.SKIP_BUILD !== '1') {
   log('npm run build ...');
-  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const b = spawnSync(npm, ['run', 'build'], { cwd: FRONTEND, stdio: 'inherit' });
+  // spawnSync('npm.cmd') is EINVAL on Node >= 18.20/20.12 on Windows (.cmd
+  // launch requires shell) - run through cmd.exe explicitly.
+  const b =
+    process.platform === 'win32'
+      ? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'npm.cmd run build'], {
+          cwd: FRONTEND,
+          stdio: 'inherit',
+        })
+      : spawnSync('npm', ['run', 'build'], { cwd: FRONTEND, stdio: 'inherit' });
   if (b.status !== 0) throw new Error('npm run build failed');
 } else {
   log('SKIP_BUILD=1 - reusing existing dist');
@@ -187,3 +197,4 @@ writeFileSync(
 );
 rmSync(path.join(FRONTEND, 'e2e-report'), { recursive: true, force: true });
 log(`ready backend=${backendUrl} owned=${backendOwned} dist=:${DIST_PORT} pid=${distPid ?? 'reused'}`);
+}

@@ -12,9 +12,10 @@ import os from 'node:os';
 const STATE_FILE = path.join(os.tmpdir(), 'step6b-e2e-state.json');
 const log = (...a) => console.log('[global-teardown]', ...a);
 
+export default function globalTeardown() {
 if (!existsSync(STATE_FILE)) {
   log('no state file - nothing to tear down');
-  process.exit(0);
+  return;
 }
 const state = JSON.parse(readFileSync(STATE_FILE, 'utf8'));
 
@@ -47,3 +48,4 @@ if (state.backendOwned && state.bash) {
 
 rmSync(STATE_FILE, { force: true });
 log('done');
+}
