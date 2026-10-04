@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Welcome } from './components/Welcome.jsx';
 import { RoomLobby } from './components/RoomLobby.jsx';
 import { Blackjack } from './components/Blackjack.jsx';
@@ -24,7 +24,19 @@ function App() {
   const [activeGame, setActiveGame] = useState(null);
   const [currentRoom, setCurrentRoom] = useState(null);
   const [pendingNavigationTarget, setPendingNavigationTarget] = useState(null);
-  const [playerId] = useMemo(() => `player-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, []);
+  // F1: this used to be `useMemo(() => \`player-...\`, [])` with bracket
+  // destructuring, which takes the FIRST CHARACTER of the generator's string -
+  // every tab, page and context therefore shared playerId === "p", so a second
+  // join/create evicted the first player and deleted their room. The lazy
+  // useState initializer is StrictMode-safe; randomUUID() is [SecureContext]-
+  // only, so plain-HTTP deployments (nginx listens on :80) keep the fallback.
+  const [playerId] = useState(
+    () =>
+      `player-${
+        globalThis.crypto?.randomUUID?.() ??
+        `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      }`
+  );
   const [playerName, setPlayerName] = useState('');
   const [lobbyNotice, setLobbyNotice] = useState('');
 
