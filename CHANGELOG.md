@@ -2085,3 +2085,274 @@ clicks (the G2 lesson).
   `welcome.png` is the representative acceptance shot (verified: black page,
   orange quick-play primaries with black text, muted subtitle, attribution
   footer pinned at the sidebar bottom).
+
+## STEP 6d - multiplayer readiness diagnostic: D1-D5 (diagnostic only, no fixes)
+
+Investigation-only step issued by the curator after the 6c acceptance. No
+production code, CSS, or test file was touched: the only repository changes
+are two diagnostic Playwright scripts under `scripts/diagnostics/` plus this
+document. Raw evidence lives in `%TEMP%\step6d\` (`d1-final.txt` 129 lines,
+`d234-final.txt` 488 lines, `state-mid.json`, `progress-mid.json`; first-run
+logs `d1-create-room-trace.txt` / `d234-two-player.txt` kept for comparison).
+Both traces ran under `E2E_REBUILD=1` (the scripts force it; fresh random
+ports 53xxx backend per run).
+
+Spec answers recorded before execution: Q1=A (per-player dealer), Q2=A
+(compact opponent strip), Q3=A (automatic spectator promotion), Q4=A
+(blackjack-only auto-ready), Q5=investigation-only.
+
+Commits: `2a0ca10` (both diagnostic scripts), `3a68957` (locator fix), 
+`13e4146` (snapshot-diff + waterfall label-filter display fixes), this doc.
+
+### D1 - Create Room waterfall: slowest points, client vs network
+
+Method: 3 games x (Quick Play solo + Create Room form), 2 browser contexts
+(creator + friend), marks + MutationObserver render ticks + full /api
+waterfall + request-header capture + global checks.
+
+Measured marks (final run):
+
+| game | Welcome card -> lobby (incl. name prompt) | Quick Play -> first game element | form submit -> "Get Ready" content | submit -> room in friend's list |
+|---|---|---|---|---|
+| blackjack | 280 ms | 1925 ms | 903 ms | 5345 ms |
+| minesweeper | 249 ms | 1468 ms | 961 ms | 5413 ms |
+| 2048 | 298 ms | 1444 ms | 866 ms | 5304 ms |
+
+Verbatim waterfall excerpts (final run):
+
+```
+PATH Q blackjack:  t+459ms POST /api/rooms -> 201 [406ms]   (cold JVM, first create)
+                   t+498ms POST /api/blackjack/sessions -> 201 [33ms]
+PATH C blackjack:  t+ 76ms POST /api/rooms -> 201 [13ms]    (warm)
+CORS preflights observed: 0   (x6 paths)
+```
+
+Render ticks, form path blackjack (MutationObserver batches, t0 = submit):
+
+```
+t+  0ms mutations=1     t+ 58ms mutations=1     t+ 78ms mutations=1
+t+605ms mutations=1     <- 527ms with no DOM mutation between 78 and 605
+"Get Ready" text first present at t+903ms
+```
+(minesweeper t+100 -> t+624 gap, 2048 t+57 -> t+574 gap - same shape.)
+
+Global checks (verbatim):
+
+```
+POSTs to /api/rooms(+join/ready/sessions): 9
+...carrying an Idempotency-Key header: 0
+frontend calls to /actuator/*: 0
+failed /api/ requests: 0
+429 responses: 0
+slowest /api/ requests:
+  406ms POST /api/rooms -> 201
+   61ms GET /api/rooms/{id}/state -> 200
+   34ms POST /api/minesweeper/sessions -> 201
+   33ms POST /api/blackjack/sessions -> 201
+   26ms POST /api/rooms/{id}/sessions -> 201
+```
+
+Conclusion: the perceived latency is client polling cadence, not network.
+The warm server answers in 7-61ms; the gaps come from four frontend timers
+that never fire immediately after a state change: lobby room-state
+`setInterval(500)` (blank ready-card until its next tick - the 527ms render
+gap above), Blackjack's roomPhase default `'LOBBY'` + first /state poll at
++1000ms (solo "Waiting for players" element at 1.4-1.9s), room-list
+`setInterval(5000)` with no refetch after create (friend sees the room at
+~5.3s), and the Welcome `window.prompt` name gate (249-298ms, synchronous).
+One server-side outlier: the first create after JVM boot took 406ms (442ms
+on the first run); every later create 7-24ms.
+
+Idempotency path: NOT exercised. 0/9 room-family POSTs carried the header.
+Code confirms why: the web client never sets `Idempotency-Key`;
+`POST /api/rooms` has no idempotency parameter at all
+(`GameRoomController:34-40`); join (`:49-53`), leave (`:79-85`) and ready
+(`:157-163`) accept the optional header and wrap execution in
+`IdempotencyService` (10-minute replay cache) - but only when the client
+sends it. The backend machinery is live, the web client simply never
+triggers it. Server-side `createRoom` stays synchronous: solo rooms run
+`initSessionForPlayer` inline (`GameRoomService:80-94`) at the measured
+7-24ms warm cost; passworded rooms additionally run BCrypt inline
+(`GameRoomService:61`) - not exercised in these traces (no passwords).
+
+### D2 - what room state actually contains (the opponents data gap)
+
+Verbatim mid-round `GET /api/rooms/{id}/state` (final run, both players
+PLAYER_TURN):
+
+```json
+{
+  "roomId": "c9297e85-6106-4321-832f-3adc1161f967",
+  "gameType": "BLACKJACK",
+  "state": "PLAYING",
+  "playerCount": 2,
+  "players": [
+    { "playerId": "player-d6e6288b-...", "playerName": "Alice",
+      "metrics": { "balance": 90, "phase": "PLAYER_TURN",
+                   "currentBet": 10, "canContinue": true } },
+    { "playerId": "player-3df9e9d0-...", "playerName": "Bob",
+      "metrics": { "balance": 90, "phase": "PLAYER_TURN",
+                   "currentBet": 10, "canContinue": true } }
+  ],
+  "roomPhase": "PLAYING", "timeRemaining": -1,
+  "gameStartTime": 1791128539389, "allPlayersReady": true,
+  "readyCount": 2, "totalPlayers": 2,
+  "winnerId": null, "winnerScore": null
+}
+```
+
+Verbatim `GET /api/rooms/{id}/progress`: per-player
+`{playerId, playerName, score, boardsCleared, gameOver, won, movesMade,
+balance, phase, clearedFields, flagsPlaced, isLocked}` plus `roomPhase`,
+`timeRemaining`. For blackjack only `balance` and `phase` are meaningful.
+
+No card data in either payload - zero card fields anywhere (verified on the
+verbatim dumps + `state-mid.json`/`progress-mid.json`). The frontend
+consumes exactly three opponent fields: `Blackjack.jsx:139-150` reads
+`progress.players` on a 2000ms interval (no immediate call) into
+`setOpponents`, and the strip JSX (`:341-347`) renders only
+`opp.playerName`, `opp.balance`, `opp.phase`. Card data exists only at
+session level: `GET /api/blackjack/sessions/{sid}` returns `BlackjackState`
+with `playerCards`, `playerValue`, `dealerCards`, `cardsRemaining`
+(`BlackjackState.java:5-17`), and the dealer hole-card reveal rule already
+lives server-side (`BlackjackSession.java:166-167`,
+`snapshot(revealDealerHand)`). Room endpoints never expose any of it.
+
+Also: `players[]` in /state is `[]` for the whole LOBBY/READY_CHECK window
+(snapshots S0, S0b, S1, S2) - sessions do not exist until the post-handoff
+registration; S2b (+1.5s) is the first snapshot with both players present.
+
+### D3 - ready / phase transition reference (measured)
+
+Phase-transition table (six snapshots, verbatim bodies in the raw log):
+
+| # | when | readyCount | allPlayersReady | roomPhase / state | gameStartTime | players[] |
+|---|---|---|---|---|---|---|
+| S0 | before any ready | 0 | false | LOBBY | 0 | [] |
+| S0b | +6.5s idle, nobody ready | 0 | false | LOBBY | 0 | [] |
+| S1 | after player A ready | 1 | false | LOBBY | 0 | [] |
+| S2 | immediately after player B ready | 2 | true | PLAYING | set | [] |
+| S2b | +1.5s after handoff | 2 | true | PLAYING | set | 2 entries |
+| S3 | mid-round, both PLAYER_TURN | 2 | true | PLAYING | set | 2 entries |
+
+Verbatim field diffs between consecutive snapshots:
+
+- S0b vs S0: no field changes; log line: `confirmed: still LOBBY after 6.5s
+  idle - scheduler never advances LOBBY`
+- S1 vs S0b: `readyCount: 0 -> 1` (nothing else)
+- S2 vs S1: `allPlayersReady: false -> true`,
+  `gameStartTime: 0 -> 1791128539389`, `readyCount: 1 -> 2`,
+  `roomPhase: "LOBBY" -> "PLAYING"`, `state: "LOBBY" -> "PLAYING"`
+- S2b vs S2: `players` empty array -> two entries
+  (`{playerId, playerName, metrics{balance:100, phase:"BETTING",
+  currentBet:0, canContinue:true}}`)
+- S3 vs S2b: both players `balance: 100 -> 90`, `currentBet: 0 -> 10`,
+  `phase: "BETTING" -> "PLAYER_TURN"`
+
+Timing (final run): A `POST /ready` t+9363 [35ms] -> B `POST /ready`
+t+9439 [14ms] -> A session create t+9709 [60ms] / register t+9734 ->
+B session create t+9946 [17ms] / register t+9957 [9ms]. Before the first
+ready, no blackjack session exists anywhere. Observation: `state` and
+`roomPhase` are redundant duplicates of the same enum in the payload - both
+made the identical LOBBY->PLAYING transition at S2.
+
+### D4 - "second player can't play"
+
+Reproduced screen facts (both runs):
+
+- right after handoff (before any bet): both players pill=BETTING,
+  place-bet enabled, hit/stand disabled, `cards=2` (dealer + own "No cards"
+  placeholders), each sees the opponent as `$100.00 BETTING`
+- A places $10 -> A pill=PLAYER_TURN, hit/stand enabled, place-bet disabled,
+  deck 52->48, `cards=3` (dealer up-card + own two cards); A's strip still
+  shows `Bob $100.00 BETTING` until the next progress tick
+- B before its own bet (A already bet): B's own pill=BETTING (place-bet
+  enabled), but B's strip still shows `Alice $100.00 BETTING` while the
+  server already had Alice at 90/PLAYER_TURN
+- both mid-round: both PLAYER_TURN, both hit/stand enabled, strips
+  converged (`opponent $90.00 PLAYER_TURN`)
+
+B's session exists after the room starts: `POST /api/blackjack/sessions`
+t+9946 -> 201 (17ms), `POST /api/rooms/{id}/sessions` (register) t+9957 ->
+201 (9ms), first bet t+12842 -> 200 (26ms). Full B trace also shows join
+t+1904 [50ms], /state every 1000ms (all 200, 6-30ms), /progress from
+t+11951 onward. Before the room starts (LOBBY) no session exists - the
+session is created client-side when the Blackjack component mounts
+(`Blackjack.jsx:88-96`), not by the room start itself.
+
+Conclusion: "second player can't play" was NOT reproduced as an inability -
+player B reached PLAYER_TURN with hit/stand enabled in both runs, and every
+B request succeeded (join/ready/session/register/bet all 2xx). What the
+trace does show is two real but different symptoms: (1) the opponent view is
+stale by up to ~2s (progress poll interval, no immediate refresh), and (2)
+the opponent view has no card data at all (D2).
+
+### D5 - lifecycle impact if the Ready step is removed (static + live)
+
+1. What starts a game today if `markReady` is never called? Nothing. The
+   only start paths are: (a) solo `createRoom`, which runs
+   `markReady + startGame + initSessionForPlayer` inline
+   (`GameRoomService:80-94`); (b) `markPlayerReady` -> when
+   `allPlayersReady()` -> blackjack calls `startGame()` directly, other
+   games call `startReadyCheck()` (`GameRoomService:249-256`). The
+   scheduler's READY_CHECK -> PLAYING branch (`tickRoomPhase:343`) can only
+   be entered through that same `startReadyCheck`.
+2. Can a blackjack room leave LOBBY without the first player's ready? No.
+   Live-proof: S0b shows zero field changes after 6.5s with two players
+   sitting in the room. Code-proof: `markPlayerReady` is the only LOBBY
+   exit and it requires `readyPlayers.size() >= players.size()`.
+3. Does the scheduler ever auto-advance LOBBY for any game? No.
+   `tickRoomPhase` (`GameRoomService:336-356`) returns immediately for
+   BLACKJACK (line 337); for other games it handles only READY_CHECK ->
+   PLAYING after `READY_CHECK_DURATION_MS = 3000` (lines 31, 341-344) and
+   PLAYING -> settle at the time limit (347-354). There is no LOBBY branch
+   anywhere; LOBBY -> READY_CHECK happens only inside `startReadyCheck`
+   (`GameRoom.java:71-76`, called from `markPlayerReady`).
+4. What changes if the gate disappears (Q4=A: blackjack auto-ready, the
+   other two games keep their ready check)? The join gate today accepts
+   only LOBBY or READY_CHECK (`GameRoomService:155-157`) and rejects
+   everything else with "Room is not accepting players (phase: ...)" - so
+   under auto-ready the first two joiners would flip the room to PLAYING
+   and every later arrival would hit that same rejection. Minesweeper/2048
+   paths are unaffected (`startReadyCheck` + 3s countdown stay as-is).
+   The spectator entry point already exists server-side
+   (`POST /{roomId}/spectate`, `GameRoomController:73-77`). The only
+   force that clears a stuck LOBBY room today is room TTL cleanup
+   (`ROOM_TTL = 2h`, `EMPTY_ROOM_TTL = 5min`, `GameRoomService:29-30`).
+
+### Findings (logged, no fixes proposed - per spec)
+
+- F-6d-1: Create Room perceived latency is frontend timer cadence (500ms
+  lobby state poll, 1000ms blackjack first state poll with default
+  `'LOBBY'`, 5000ms room-list poll, none fire immediately after a state
+  change; `window.prompt` adds 249-298ms). Warm network path is 7-61ms.
+- F-6d-2: first `POST /api/rooms` after JVM boot costs 406-442ms; warm
+  creates 7-24ms. No other slow request exists (next: 61ms GET /state).
+- F-6d-3: `Idempotency-Key` is sent by 0/9 room-family POSTs; create has no
+  idempotency parameter at all; join/leave/ready have optional header +
+  `IdempotencyService` (10min TTL) that the web client never exercises.
+- F-6d-4: across six full UI paths: 0x429, 0 failed requests, 0 CORS
+  preflights (serve-dist same-origin), 0 frontend `/actuator` calls.
+- F-6d-5: `/state` and `/progress` contain no card fields; the opponent
+  strip renders only playerName/balance/phase from a 2s progress poll;
+  cards exist only in session-level `BlackjackState` (with the existing
+  hole-card reveal rule).
+- F-6d-6: `/state` `players[]` is empty throughout LOBBY/READY_CHECK -
+  players appear only after post-handoff session registration.
+- F-6d-7: the measured phase-transition reference is the six-snapshot table
+  above; `state` and `roomPhase` are redundant duplicate fields.
+- F-6d-8: "second player can't play" not reproduced as an inability - B
+  played fully (PLAYER_TURN, hit/stand, bet all 2xx); the genuine defects
+  are the <=2s stale opponent view and the absent opponent card data.
+- F-6d-9: LOBBY never auto-advances (live 6.5s + code: blackjack early
+  return, no LOBBY branch in the scheduler); start paths are solo create
+  and all-ready markPlayerReady only; PLAYING rooms reject new joiners;
+  stuck LOBBY rooms die only via 2h/5min TTL.
+
+### Verification
+
+- `git status`: zero production/CSS/test files touched in this step - only
+  `scripts/diagnostics/*.mjs` (2 files) and this CHANGELOG entry.
+- Gates not rerun (no source change); the two diagnostic runs themselves
+  exercised create/join/ready/session/register/bet end-to-end, all 2xx
+  (`%TEMP%\step6d\d1-final.txt`, `d234-final.txt`).
