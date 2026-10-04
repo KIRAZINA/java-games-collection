@@ -613,14 +613,14 @@ OTHER FINDINGS (report-only, outside Step 4 scope)
 - CORS Access-Control-Allow-Headers does not list X-Request-Id or
   X-Player-Token (pre-existing; relevant only to cross-origin browsers).
 
-ITEMS DEFERRED TO A FUTURE STEP (spec DEFERRED list, unchanged)
+ITEMS DEFERRED TO A FUTURE STEP (spec DEFERRED list; two items shipped in STEP 6b.3, marked below)
 - External session/room store (Redis or Postgres) with its own design step
   (write-through vs authoritative store, TTL, migration, testing).
 - Horizontal scaling / sticky sessions / shared rate-limit state.
-- Token rotation for X-Player-Token.
+- Token rotation for X-Player-Token. [shipped: STEP 6b.3 A3]
 - Rate limit per token in addition to per IP.
 - CSRF / SameSite cookie strategy (stateless REST, no cookies today).
-- Frontend error boundary for whole-app crash recovery.
+- Frontend error boundary for whole-app crash recovery. [shipped: STEP 6b.3 A2]
 - Carryover from earlier steps: fill-or-delete the empty stubs in
   NonStandardConcurrentTest (betOverBalance, wrongPassword,
   RoomNonStandard.*), and the vacuous if-guarded assertion audit.
@@ -1835,6 +1835,110 @@ nine assertions exact-matched.
 ### Still deferred
 
 - `winnerId` / `winnerScore` exposure from `settleGame` (B3's "and a winner",
-  `STEP_6b.md:86`): `GameRoom` already computes both (`getWinnerId`,
-  `getWinnerScore`), but no response DTO or UI element exposes them - the
-  reported finding from Part B, unchanged by 6b.1/6b.2.
+  `STEP_6b.md:86`) - **closed by STEP 6b.3 A1 below.**
+
+## STEP 6b.3 - ship-prep option A: winner exposure (A1), error boundary (A2), token rotation (A3)
+
+Curator decision after the 6b.2 follow-ups: **"Full A, then B"** - close all
+three remaining findings as sequential commits with gates after each, then
+assess readiness to ship to Render (part B of the same decision). Each item is
+its own commit pair (backend, then frontend where applicable); the working tree
+was clean at each item's start.
+
+### A1 - expose the settled winner (B3's "and a winner")
+
+- `878f8cf` backend: `RoomStateResponse` gains `winnerId` / `winnerScore`
+  (both null until `settleGame` runs, passed through `getRoomState`), plus
+  `RoomWinnerExposureTest` - a multiplayer 2048 room settled by a 1s timer
+  (Awaitility, asserts `winnerId="winner-owner"`, `winnerScore=0`, winner named
+  in `players[]`) and an unsettled room asserting both fields are null.
+- `84d4ad3` frontend: `src/components/roomWinner.js` label helper, a
+  `<p role="status">Winner: ...</p>` line under the GAME_OVER banner in
+  `Game2048` and `Minesweeper`, `.winner-line` CSS, a 6-branch unit test, one
+  settled-winner test per game component, and B3 in `step6b.spec.ts` now
+  requires **both** pages to show the same `Winner: ...` line plus a
+  non-empty string `winnerId` and a numeric `winnerScore` in the state payload.
+
+Solo rooms can never settle on the timer (`GameRoomService.createRoom:71`
+forces `timeLimitSeconds = 0` when `isSinglePlayer`), so the settling test is
+multiplayer by necessity, not by omission.
+
+**First B3 run failed and was reported verbatim before touching more code:**
+`getByText(/^Winner: /)` - element(s) not found, test timeout 30000ms. Root
+cause was stale-jar reuse: `scripts/e2e/start_server.sh:39` keeps an existing
+`games-backend-1.0-SNAPSHOT.jar`, and the jar on disk predated
+`RoomStateResponse.java`. Two leftover JVMs running that jar were killed
+(pids 1540/2404, listeners on port 18081) and the suite re-ran with
+`E2E_REBUILD=1` -> **6 passed (1.3m)**. Standing reminder: any backend change
+requires `E2E_REBUILD=1` for e2e.
+
+### A2 - whole-app error boundary
+
+`4850e37`: `ErrorBoundary` class component (`getDerivedStateFromError`,
+`role="alert"` fallback with the caught message and a Reload button, stays
+tripped - no auto-reset) wired outermost around `<App/>` in `main.jsx`, with
+`.error-boundary` CSS and 4 tests in `src/test/ErrorBoundary.test.jsx`
+(`console.error` spied). Closes the deferred-list item "Frontend error
+boundary for whole-app crash recovery".
+
+### A3 - rotate the token when a player commits to the match
+
+- `81a4f4f` backend: `GameRoomService.rotatePlayerToken` mints a fresh UUID
+  (distinct from `issuePlayerToken`, which stays idempotent for
+  create/join/spectate replays). `POST /{roomId}/ready` now runs
+  verify -> mark ready -> rotate and returns `{"playerToken": ...}`: the value
+  that authenticated the request dies the moment its holder commits. An
+  idempotent replay returns the cached token instead of rotating twice; a
+  retry still carrying the pre-rotation token is rejected 403 **before**
+  idempotency is consulted - stale credentials are dead by design, and the
+  recovery for a client that lost the ready response is the existing rejoin
+  flow. `PlayerTokenTest` 24 (old token dead, new token live) and 25
+  (same-key replay does not double-rotate; plus the pinned 403 trade-off)
+  cover both.
+- `422893d` frontend: `RoomLobby.handleMarkReady` stores `result.playerToken`
+  in sessionStorage **before** `readySent` flips - ordering is load-bearing,
+  because session registration when the match starts and the lobby's own leave
+  both authenticate with the stored value one call later. `App.test.jsx`
+  drives create -> lobby -> `I'm Ready!` against the real api.js storage and
+  asserts `getRoomToken` flips `tok-before` -> `tok-after`.
+
+The JSON body also fixes a latent bug by construction: `api()` calls
+`response.json()` on every non-204 response, while ready used to return an
+empty body. First attempt at test 25 failed honestly (`Status expected:<200>
+but was:<403>`, `%TEMP%\step6b3\mvn-a3.txt`) because a replay carrying the
+pre-rotation token cannot authenticate - the test premise, not the
+implementation, was wrong, and the shipped test pins the real semantics.
+
+### Gates after A1-A3 (final)
+
+| Gate | Result |
+|---|---|
+| `mvn test -pl games-backend` | **259 / 0 failures / 0 errors / 0 skipped** (255 before 6b.3: +2 winner, +2 rotation) - `%TEMP%\step6b3\mvn-a3-r2.txt` |
+| `npx vitest run` | **11 files / 105 tests passed** (91 at 6b.2 close: +9 A1, +4 A2, +1 A3) |
+| `npm run e2e` with `E2E_REBUILD=1` | **6 passed (1.3m)**, B3 asserting the winner line on both pages - `%TEMP%\step6b3\e2e-a3.txt` |
+
+### Files touched in Step 6b.3 (scope proof)
+
+- `games-backend/.../RoomStateResponse.java`, `GameRoomService.java` (winner
+  passthrough, `rotatePlayerToken`), `GameRoomController.java` (`ReadyResponse`)
+- `games-backend/src/test/.../RoomWinnerExposureTest.java` (new),
+  `PlayerTokenTest.java` (+2)
+- `games-frontend/src/components/roomWinner.js` (new), `ErrorBoundary.jsx`
+  (new), `Game2048.jsx`, `Minesweeper.jsx`, `RoomLobby.jsx`, `main.jsx`,
+  `styles.css`
+- `games-frontend/src/test/{roomWinner,ErrorBoundary}.test.jsx` (new),
+  `Game2048.test.jsx`, `Minesweeper.test.jsx`, `App.test.jsx`
+- `games-frontend/e2e/step6b.spec.ts` (B3 winner assertions)
+- `CHANGELOG.md` (this section)
+
+No production dependency added; no gameplay rule changed. A1 and A3 **did**
+change successful-response JSON shapes (two new nullable fields on
+`GET /{roomId}/state`, a new body on `POST /{roomId}/ready`) - both changes
+explicitly authorized by the curator's "Full A" decision. No assertion was
+removed, relaxed or skipped; every failing gate was diagnosed and re-run green
+with the failure recorded above.
+
+### Still deferred
+
+- Nothing from the 6b.2 deferred list remains. Remaining pre-ship work is
+  part **B** of the curator decision: assess and execute the Render deploy.
