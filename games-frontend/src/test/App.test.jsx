@@ -91,3 +91,45 @@ describe('F2 - quick play uses the prompted name instead of stale state', () => 
     expect(screen.getByText('Alice')).toBeInTheDocument();
   });
 });
+
+describe('G1 - a multiplayer room waits in the lobby for the ready step', () => {
+  let createRoom;
+
+  beforeEach(() => {
+    createRoom = vi.spyOn(roomsApi, 'createRoom').mockResolvedValue({
+      roomId: 'r-multi',
+      playerToken: 'tok-multi',
+      isSinglePlayer: false,
+    });
+    vi.spyOn(roomsApi, 'getRoomState').mockResolvedValue({
+      roomPhase: 'LOBBY',
+      timeRemaining: 30,
+      players: [],
+      playerCount: 1,
+    });
+    vi.stubGlobal('prompt', vi.fn(() => 'Alice'));
+    stubNetwork();
+  });
+
+  it('opens the room ready overlay, never the game component waiting card', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Play Minesweeper/ }));
+    await user.click(screen.getByRole('button', { name: '+ Create Room' }));
+    await user.type(screen.getByLabelText('Room Name'), 'Multi Room');
+    await user.click(screen.getByRole('button', { name: 'Create Room' }));
+
+    // "I'm Ready!" only renders for roomPhase === 'LOBBY' and it lives in
+    // RoomLobby, so finding it proves the multiplayer room stayed in the lobby.
+    const ready = await screen.findByRole('button', { name: "I'm Ready!" }, { timeout: 4000 });
+    expect(ready).toBeInTheDocument();
+    expect(createRoom).toHaveBeenCalledTimes(1);
+    expect(createRoom.mock.calls[0][2].isSinglePlayer, 'the room is multiplayer').toBe(false);
+    expect(createRoom.mock.calls[0][3], 'ownerId').toMatch(/^player-.+/);
+
+    // the game component's waiting card has no ready button - reaching it here
+    // is what made every multiplayer room unstartable
+    expect(screen.queryByText('Waiting for players')).not.toBeInTheDocument();
+  });
+});

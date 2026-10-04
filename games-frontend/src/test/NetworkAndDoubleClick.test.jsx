@@ -26,6 +26,7 @@ vi.mock('../api/api.js', () => ({
   },
   setRoomToken: vi.fn(),
   clearRoomToken: vi.fn(),
+  getRoomToken: vi.fn(),
   rehydrateRoomTokens: vi.fn(),
   extractRoomIdFromPath: vi.fn(),
 }));
@@ -322,8 +323,16 @@ describe('Area 2 - rapid repeated clicks send a single request', () => {
     await user.click(joinButton);
     expect(roomsApi.joinRoom).toHaveBeenCalledTimes(1);
 
+    // The room must keep reporting LOBBY or the poll's error path replaces the
+    // overlay again; stub it before the join resolves.
+    roomsApi.getRoomState.mockResolvedValue({
+      roomPhase: 'LOBBY', timeRemaining: 30, players: [], playerCount: 1,
+    });
     gate.resolve({ roomId: 'r-lobby', playerToken: 'tok', isSinglePlayer: false });
-    await waitFor(() => expect(joinButton).toBeEnabled());
+    // G1 (step 6b.2): a join no longer re-renders the same list row - the room
+    // hands over to its ready overlay - so the busy state is proven by that
+    // hand-off.
+    await screen.findByRole('button', { name: "I'm Ready!" }, { timeout: 4000 });
     expect(roomsApi.joinRoom).toHaveBeenCalledTimes(1);
   });
 
