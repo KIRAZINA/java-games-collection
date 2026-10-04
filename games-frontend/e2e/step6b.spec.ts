@@ -183,17 +183,23 @@ test('B3 - two-player 2048 room settles to GAME_OVER after the 8s time limit', a
   // so an 8s room cannot be created through the UI - it is created through the
   // API with timeLimitSeconds: 8. maxPlayers: 3 because the API-created owner
   // occupies a slot and both UI players must still be able to join.
+  // F4 (step6b.1): every room knob belongs INSIDE `settings` - CreateRoomRequest
+  // only has roomName/gameType/settings/ownerId/ownerName, and GameSettings is a
+  // primitive int that defaults to 0 when omitted, which Part A's @Min(1) rejects.
   const created = await request.post('/api/rooms', {
     data: {
       roomName,
       gameType: 'TWENTY_FORTY_EIGHT',
-      settings: {},
-      passwordProtected: false,
-      passwordHash: '',
-      allowBots: false,
-      maxPlayers: 3,
-      timeLimitSeconds: 8,
-      isSinglePlayer: false,
+      settings: {
+        gameType: 'TWENTY_FORTY_EIGHT',
+        settings: {},
+        passwordProtected: false,
+        passwordHash: '',
+        allowBots: false,
+        maxPlayers: 3,
+        timeLimitSeconds: 8,
+        isSinglePlayer: false,
+      },
       ownerId: `api-owner-${RUN}`,
       ownerName: 'ApiOwner',
     },
@@ -316,47 +322,34 @@ test('B5 - token loss (sessionStorage cleared) returns the player to the room li
   acceptPrompt(page, `player-a-${RUN}`);
   await page.goto('/');
 
-  // Page A enters a room whose lobby hosts the "I'm Ready!" button - a
-  // single-player practice room is the only room type that renders the
-  // ReadyCheckOverlay (RoomLobby.jsx:282/306).
+  // F5 (step6b.1): create a 2-player room WITHOUT the solo checkbox, so the
+  // room is created in LOBBY instead of auto-starting. Solo rooms are created
+  // already in PLAYING (GameRoomService.createRoom marks the owner ready and
+  // calls startGame), which is why the previous revision of this scenario
+  // never reached the ready overlay.
   await page.getByRole('button', { name: 'Play Minesweeper' }).click();
   await page.getByRole('button', { name: '+ Create Room' }).click();
   const form = page.locator('form');
   await form.getByLabel('Room Name').fill(`B5 Room ${RUN}`);
-  await form.locator('input[type="checkbox"]').check();
   await form.locator('button[type="submit"]').click();
 
-  // Diagnostic: in a real browser the solo room is created already in PLAYING
-  // phase (GameRoomService.createRoom auto-ready + startGame), so the lobby
-  // overlay is skipped and the board appears instead. The jsdom counterpart
-  // (TokenLoss.test.jsx) stubs GET /state as LOBBY, which is why it passes.
-  await expect(page.locator('.mines-grid')).toBeVisible({ timeout: 15000 });
-  test.info().annotations.push({
-    type: 'finding-1',
-    description:
-      'solo room auto-starts PLAYING - ReadyCheckOverlay (the only home of "I\'m Ready!") never renders',
-  });
+  // the room stays in LOBBY
+  await expect(page.getByText('Waiting for players')).toBeVisible({ timeout: 15000 });
 
   // In Page A, evaluate sessionStorage.clear()
   await page.evaluate(() => sessionStorage.clear());
   expect(await page.evaluate(() => sessionStorage.getItem('roomTokens'))).toBeNull();
 
-  // Diagnostic: the next authenticated poll still carries X-Player-Token and
-  // succeeds - api.js caches roomTokens in module scope (api.js:4-28), so a
-  // storage-only clear cannot produce the 403 the spec expects. The jsdom test
-  // passes because it explicitly calls rehydrateRoomTokens() after clear()
-  // (TokenLoss.test.jsx:61-62) and stubs /ready as 403.
+  // F3: the in-memory cache is reconciled against sessionStorage on the request
+  // path, so the next room request carries no X-Player-Token at all (a same-tab
+  // clear fires no `storage` event, so a listener alone could not do this).
   const nextPoll = page.waitForResponse((r) => r.url().includes('/state'), { timeout: 5000 });
   const resp = await nextPoll;
   expect(resp.status()).toBe(200);
-  expect(resp.request().headers()['x-player-token']).toBeTruthy();
-  test.info().annotations.push({
-    type: 'finding-2',
-    description: 'sessionStorage cleared but app still authenticates (in-memory token cache)',
-  });
+  expect(resp.request().headers()['x-player-token']).toBeFalsy();
 
   // Click "I'm Ready!" -> server 403 -> notice "Please rejoin the room." ->
-  // back to the room list (spec steps; unreachable in the real browser)
+  // back to the room list (spec steps)
   const ready = page.getByRole('button', { name: "I'm Ready!" });
   await expect(ready).toBeVisible({ timeout: 15000 });
   await ready.click();
