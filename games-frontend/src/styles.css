@@ -351,6 +351,47 @@ select {
   background: var(--surface-3);
 }
 
+/* Step 6e: compact opponent cards - same light face treatment as .playing-card
+   (game content, not chrome) but shrunk for the opponent panels, which stack
+   alongside the main table. */
+.playing-card--compact {
+  width: 34px;
+  height: 48px;
+  padding: 4px;
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+.playing-card--compact strong {
+  font-size: 0.6rem;
+}
+
+.playing-card--compact span {
+  font-size: 0.55rem;
+}
+
+/* Step 6e: compact opponent panel - name + balance, the opponent's face-up
+   cards, their dealer's face-up card(s) (the payload never sends the hole
+   card), and phase. Panels stack in a single column on narrow screens. */
+.opponent-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 200px;
+  padding: 8px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border-strong);
+  border-radius: 8px;
+}
+
+.compact-cards-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
 .mines-grid {
   --cell-size: min(42px, calc((100vw - 340px) / var(--cols)));
   display: grid;

@@ -2,6 +2,7 @@ package com.KIRA_ZINA.backend.common;
 
 import com.KIRA_ZINA.backend.blackjack.domain.BlackjackState;
 import com.KIRA_ZINA.backend.blackjack.domain.DealerDifficulty;
+import com.KIRA_ZINA.backend.blackjack.domain.RoundPhase;
 import com.KIRA_ZINA.backend.blackjack.service.BlackjackSessionService;
 import com.KIRA_ZINA.backend.minesweeper.domain.MinesweeperState;
 import com.KIRA_ZINA.backend.minesweeper.service.MinesweeperSessionService;
@@ -269,7 +270,8 @@ public class GameRoomService {
             GameRoom.Player player = room.getPlayer(pid);
             String playerName = player != null ? player.name() : pid;
             Map<String, Object> metrics = extractMetrics(sid, room.getSettings().gameType());
-            playerStates.add(new RoomStateResponse.PlayerState(pid, playerName, metrics));
+            RoomStateResponse.BlackjackView blackjack = extractBlackjackView(sid, room.getSettings().gameType());
+            playerStates.add(new RoomStateResponse.PlayerState(pid, playerName, metrics, blackjack));
         }
 
         long timeRemaining = calculateTimeRemaining(room);
@@ -479,6 +481,44 @@ public class GameRoomService {
             }
         }
         return metrics;
+    }
+
+    /**
+     * Step 6e (A1): project one blackjack player's live hand onto the room
+     * state payload. Pure read-side - it reuses the session's existing
+     * {@code state()} snapshot, so the dealer hole-card reveal rule is the
+     * one already implemented in {@code BlackjackSession.snapshot}; this
+     * method adds no new reveal logic.
+     *
+     * Returns null (and the field is omitted from the JSON) when: the room is
+     * not blackjack, the registered session no longer exists, or the session
+     * has not dealt a hand yet (BETTING / closed). Only a live or just-settled
+     * hand carries card data.
+     */
+    private RoomStateResponse.BlackjackView extractBlackjackView(String sessionId, GameType gameType) {
+        if (gameType != GameType.BLACKJACK) return null;
+        try {
+            BlackjackState state = blackjackSessionService.state(sessionId);
+            RoundPhase phase = state.phase();
+            boolean meaningful =
+                    phase == RoundPhase.PLAYER_TURN
+                            || phase == RoundPhase.DEALER_TURN
+                            || phase == RoundPhase.ROUND_OVER;
+            if (!meaningful) return null;
+            return new RoomStateResponse.BlackjackView(
+                    state.playerCards(),
+                    state.playerValue(),
+                    state.dealerCards(),
+                    state.dealerValue(),
+                    state.phase().name()
+            );
+        } catch (ResourceNotFoundException e) {
+            log.debug("Session {} not available for blackjack view extraction", sessionId, e);
+            return null;
+        } catch (Exception e) {
+            log.warn("Failed to extract blackjack view for session {} ({})", sessionId, e.getClass().getName(), e);
+            return null;
+        }
     }
 
     private PlayerProgress extractPlayerProgress(String sessionId, GameType gameType, String playerId, String playerName) {

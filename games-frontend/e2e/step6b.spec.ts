@@ -450,3 +450,90 @@ test('B6 - two-tab isolation sanity check', async ({ browser }) => {
   await ctxA.close();
   await ctxB.close();
 });
+
+test('B7 - two-player Blackjack: opponent panel shows cards, hides the dealer hole, reveals on stand', async ({
+  browser,
+}) => {
+  test.setTimeout(60_000);
+  const roomName = `B7 Room ${RUN}`;
+  const nameA = `bj-a-${RUN}`;
+  const nameB = `bj-b-${RUN}`;
+
+  // Page A: create a two-player Blackjack room. The default capacity is 4 and
+  // it is not solo, but allPlayersReady() counts PRESENT players
+  // (GameRoom.java:60), so two present players both ready still start PLAYING.
+  const ctxA = await browser.newContext();
+  const pageA = await ctxA.newPage();
+  acceptPrompt(pageA, nameA);
+  await pageA.goto('/');
+  await pageA.getByRole('button', { name: 'Play Blackjack' }).click();
+  await pageA.getByRole('button', { name: '+ Create Room' }).click();
+  await pageA.locator('form').getByLabel('Room Name').fill(roomName);
+  await pageA.locator('form button[type="submit"]').click();
+  await expect(pageA.getByText('Get Ready', { exact: true })).toBeVisible({ timeout: 15000 });
+
+  // Page B: join the room by name (list shows 1/4 players at this point).
+  const ctxB = await browser.newContext();
+  const pageB = await ctxB.newPage();
+  acceptPrompt(pageB, nameB);
+  await pageB.goto('/');
+  await pageB.getByRole('button', { name: 'Play Blackjack' }).click();
+  const nameCol = pageB.locator(`div:has(> strong:text-is("${roomName}"))`);
+  await expect(nameCol).toContainText('1/4 players', { timeout: 15000 });
+  await nameCol.locator('..').getByRole('button', { name: 'Join' }).click();
+  await expect(pageB.getByText('Get Ready', { exact: true })).toBeVisible({ timeout: 15000 });
+
+  // Both ready -> room reaches PLAYING; each Blackjack component mounts and
+  // auto-creates + registers its own session (independent hands/dealers).
+  const readyA = pageA.getByRole('button', { name: "I'm Ready!" });
+  const readyB = pageB.getByRole('button', { name: "I'm Ready!" });
+  await expect(readyA).toBeVisible({ timeout: 15000 });
+  await readyA.click();
+  await expect(readyB).toBeVisible({ timeout: 15000 });
+  await readyB.click();
+
+  await expect(pageA.locator('.blackjack-table')).toBeVisible({ timeout: 15000 });
+  await expect(pageB.locator('.blackjack-table')).toBeVisible({ timeout: 15000 });
+
+  // Drive B into PLAYER_TURN. placeBet() auto-settles on naturals
+  // (BlackjackSession.java), so retry with New Round until a normal hand lands
+  // on PLAYER_TURN (bounded, deterministic in practice) - same pattern as B1.
+  let bPlayerTurn = false;
+  for (let attempt = 0; attempt < 8 && !bPlayerTurn; attempt++) {
+    await expect(headerMeta(pageB)).toHaveText('BETTING');
+    await pageB.locator('#bj-place-bet').click();
+    await expect(headerMeta(pageB)).toHaveText(/PLAYER_TURN|ROUND_OVER/, { timeout: 10000 });
+    bPlayerTurn = (await headerMeta(pageB).textContent()) === 'PLAYER_TURN';
+    if (!bPlayerTurn) await pageB.locator('#bj-new-round').click();
+  }
+  expect(bPlayerTurn, 'B must reach PLAYER_TURN to inspect the hidden hole card').toBe(true);
+
+  // A's view of B: the opponent panel is sourced from GET /state, whose
+  // blackjack projection for a live hand carries B's 2 face-up cards and only
+  // the dealer's face-up card (dealerValue null, no hole card) - so the hole
+  // card can never be rendered here.
+  const panelBOnA = pageA.locator('.opponent-panel', { hasText: nameB });
+  await expect(panelBOnA).toBeVisible({ timeout: 15000 });
+  const bPlayerRow = panelBOnA.locator('.compact-cards-row').first();
+  const bDealerRow = panelBOnA.locator('.compact-cards-row').nth(1);
+  // B's hand is visible to A.
+  await expect(bPlayerRow.locator('.playing-card--compact')).toHaveCount(2, { timeout: 15000 });
+  // The hole card is hidden: exactly one dealer card, face-up only.
+  await expect(bDealerRow.locator('.playing-card--compact')).toHaveCount(1, { timeout: 15000 });
+
+  // B commits: stand -> B's round settles -> the dealer hand fully reveals in
+  // A's next /state poll (the dealer row grows from 1 card to the full hand).
+  await pageB.locator('#bj-stand').click();
+  await expect.poll(
+    async () => bDealerRow.locator('.playing-card--compact').count(),
+    { timeout: 15000 }
+  ).toBeGreaterThanOrEqual(2);
+
+  // Symmetry: B renders A's opponent panel too. A never bet, so it carries no
+  // cards (the fallback name/balance/phase view), which still proves the
+  // two-way panel renders across two real browsers.
+  await expect(pageB.locator('.opponent-panel', { hasText: nameA })).toBeVisible({ timeout: 15000 });
+
+  await ctxA.close();
+  await ctxB.close();
+});

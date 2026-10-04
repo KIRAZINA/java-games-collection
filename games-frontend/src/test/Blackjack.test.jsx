@@ -16,6 +16,7 @@ vi.mock('../api/api.js', () => ({
   roomsApi: {
     registerSession: vi.fn(),
     getRoomProgress: vi.fn(),
+    getRoomState: vi.fn(),
     joinRoom: vi.fn(),
     leaveRoom: vi.fn(),
   },
@@ -287,5 +288,97 @@ describe('Blackjack Component', () => {
 
     await user.click(screen.getByRole('button', { name: /Exit Room/i }));
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Opponent panels (Step 6e) ─────────────────────────────────────────────
+  // Opponent card data is sourced from GET /state (the 1s poll that now owns
+  // the opponent list). These tests pin what the compact panel shows and -
+  // crucially - that the dealer hole card is never rendered, since the payload
+  // only ever carries the face-up dealer card while a round is live.
+
+  describe('Opponent panels (Step 6e)', () => {
+    function renderRoom() {
+      return render(<Blackjack roomId="r1" playerId="me" playerName="Me" />);
+    }
+
+    it('renders an opponent face-up hand + dealer up-card, never the hole card', async () => {
+      roomsApi.getRoomState.mockResolvedValue({
+        roomPhase: 'PLAYING',
+        players: [
+          {
+            playerId: 'me',
+            playerName: 'Me',
+            metrics: { balance: 90, phase: 'PLAYER_TURN', currentBet: 10, canContinue: true },
+            blackjack: {
+              playerCards: [{ rank: 'ACE', suit: 'HEARTS' }, { rank: 'TEN', suit: 'SPADES' }],
+              playerValue: 21,
+              dealerCards: [{ rank: 'FIVE', suit: 'CLUBS' }],
+              dealerValue: null,
+              phase: 'PLAYER_TURN',
+            },
+          },
+          {
+            playerId: 'bob',
+            playerName: 'Bob',
+            metrics: { balance: 90, phase: 'PLAYER_TURN', currentBet: 10, canContinue: true },
+            blackjack: {
+              playerCards: [{ rank: 'KING', suit: 'SPADES' }, { rank: 'SEVEN', suit: 'HEARTS' }],
+              playerValue: 17,
+              dealerCards: [{ rank: 'EIGHT', suit: 'CLUBS' }],
+              dealerValue: null,
+              phase: 'PLAYER_TURN',
+            },
+          },
+        ],
+      });
+      roomsApi.getRoomProgress.mockResolvedValue({ roomPhase: 'PLAYING' });
+      roomsApi.registerSession.mockResolvedValue(undefined);
+
+      renderRoom();
+
+      const panel = (await screen.findByText('Bob')).closest('.opponent-panel');
+      expect(panel).not.toBeNull();
+      // Bob's two face-up cards and the dealer's single face-up card.
+      expect(panel.textContent).toContain('KING');
+      expect(panel.textContent).toContain('SEVEN');
+      expect(panel.textContent).toContain('EIGHT');
+      // 2 player cards + 1 dealer up-card = 3. A 4th compact card would mean
+      // the dealer hole card leaked; the payload never carries it.
+      expect(panel.querySelectorAll('.playing-card--compact')).toHaveLength(3);
+
+      // The current player (Me) is in the same payload but must not get a panel.
+      expect(document.querySelectorAll('.opponent-panel')).toHaveLength(1);
+    });
+
+    it('renders only name/balance/phase when an opponent has no card data', async () => {
+      roomsApi.getRoomState.mockResolvedValue({
+        roomPhase: 'PLAYING',
+        players: [
+          {
+            playerId: 'me',
+            playerName: 'Me',
+            metrics: { balance: 90, phase: 'PLAYER_TURN', currentBet: 10, canContinue: true },
+            blackjack: null,
+          },
+          {
+            playerId: 'carol',
+            playerName: 'Carol',
+            metrics: { balance: 50, phase: 'PLAYER_TURN', currentBet: 5, canContinue: true },
+            blackjack: null,
+          },
+        ],
+      });
+      roomsApi.getRoomProgress.mockResolvedValue({ roomPhase: 'PLAYING' });
+      roomsApi.registerSession.mockResolvedValue(undefined);
+
+      renderRoom();
+
+      const panel = (await screen.findByText('Carol')).closest('.opponent-panel');
+      expect(panel).not.toBeNull();
+      expect(panel.querySelectorAll('.playing-card--compact')).toHaveLength(0);
+      expect(panel.textContent).toContain('$50.00');
+      expect(panel.textContent).toContain('PLAYER_TURN');
+      expect(panel.textContent).not.toContain('Dealer:');
+    });
   });
 });

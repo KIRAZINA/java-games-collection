@@ -170,8 +170,10 @@ describe('solo non-blackjack rooms hand off from the lobby to the game', () => {
     await user.type(screen.getByLabelText('Room Name'), 'Solo Room');
     await user.click(screen.getByRole('button', { name: 'Create Room' }));
 
-    expect(await screen.findByText('Minesweeper Lobby')).toBeInTheDocument();
-
+    // Step 6e B1: a solo room is created already PLAYING, so the lobby now
+    // polls immediately on mount and hands off on the very first poll. The
+    // transient "Minesweeper Lobby" ready-overlay state no longer lingers long
+    // enough to assert on, so we assert the handoff itself directly below.
     // the poll sees PLAYING and hands off to the game component
     await screen.findByRole('heading', { name: /^Minesweeper$/ }, { timeout: 4000 });
     expect(screen.queryByText('Minesweeper Lobby')).not.toBeInTheDocument();

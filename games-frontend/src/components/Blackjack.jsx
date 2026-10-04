@@ -50,6 +50,48 @@ function formatMoney(value) {
   return Number(value ?? 0).toFixed(2);
 }
 
+// Step 6e: compact panel for one opponent. Card data (opp.blackjack) arrives
+// from GET /state and already respects that opponent's own dealer-reveal rule,
+// so the hole card can never be rendered here - it is not in the payload.
+// When opp.blackjack is null/absent (pre-bet or no session yet) the panel falls
+// back to name + balance + phase, the same information the old strip showed.
+function OpponentPanel({ opp }) {
+  const bj = opp.blackjack;
+  const hasCards = Boolean(bj);
+  return (
+    <div className="opponent-panel" aria-label={`Opponent ${opp.playerName}`}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, width: '100%' }}>
+        <span style={{ fontWeight: 700, color: 'var(--text)' }}>{opp.playerName}</span>
+        <span>{`$${formatMoney(opp.balance ?? 0)}`}</span>
+      </div>
+      {hasCards && (
+        <>
+          <div className="compact-cards-row">
+            {bj.playerCards.map((card, index) => (
+              <div className="playing-card playing-card--compact" key={`opp-p-${card.rank}-${card.suit}-${index}`}>
+                <strong>{card.rank}</strong>
+                <span>{card.suit}</span>
+              </div>
+            ))}
+            <span style={{ fontWeight: 700 }}>{bj.playerValue}</span>
+          </div>
+          <div className="compact-cards-row">
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Dealer:</span>
+            {bj.dealerCards.map((card, index) => (
+              <div className="playing-card playing-card--compact" key={`opp-d-${card.rank}-${card.suit}-${index}`}>
+                <strong>{card.rank}</strong>
+                <span>{card.suit}</span>
+              </div>
+            ))}
+            {bj.dealerValue != null && <span style={{ fontWeight: 700 }}>{bj.dealerValue}</span>}
+          </div>
+        </>
+      )}
+      <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>{opp.phase ?? ''}</div>
+    </div>
+  );
+}
+
 const MAX_POLL_FAILURES = 3;
 
 export function Blackjack({ roomId, playerId, playerName, onExit }) {
@@ -125,25 +167,46 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
       }
     };
 
-    stateInterval = setInterval(async () => {
+    const pollState = async () => {
       try {
         const roomState = await roomsApi.getRoomState(roomId);
         if (cancelled || stopped) return;
         pollFailuresRef.current = 0;
         setRoomPhase(roomState.roomPhase);
+        // Opponents and their live card data come from /state's players[]
+        // (Step 6e adds the `blackjack` projection here). Sourced on the 1s
+        // state poll; progress no longer owns the opponent list, so the cards
+        // never get clobbered by a progress payload that carries no cards.
+        const others = (roomState.players ?? [])
+          .filter((p) => p.playerId !== playerId)
+          .map((p) => ({
+            playerId: p.playerId,
+            playerName: p.playerName,
+            balance: p.metrics?.balance,
+            phase: p.metrics?.phase,
+            currentBet: p.metrics?.currentBet,
+            blackjack: p.blackjack ?? null,
+          }))
+          .sort((a, b) => String(a.playerId).localeCompare(String(b.playerId)));
+        setOpponents(others);
       } catch (err) {
         onPollFailure(err);
       }
-    }, 1000);
+    };
+
+    // B1: fire the first /state on mount so the room phase (and opponent
+    // cards) populate on the first frame instead of waiting up to 1000ms.
+    pollState();
+    stateInterval = setInterval(pollState, 1000);
 
     progressInterval = setInterval(async () => {
       try {
         const progress = await roomsApi.getRoomProgress(roomId);
         if (cancelled || stopped) return;
         pollFailuresRef.current = 0;
+        // Opponents are owned by the /state poll (pollState) so the Step 6e
+        // card projection is present; progress only refreshes the room phase.
         if (progress.roomPhase) setRoomPhase(progress.roomPhase);
-        const others = (progress.players ?? []).filter((p) => p.playerId !== playerId);
-        setOpponents(others);
       } catch (err) {
         onPollFailure(err);
       }
@@ -339,11 +402,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
         </div>
 
         {opponents.map((opp) => (
-        <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid var(--border-strong)', paddingLeft: 10 }}>
-          <span style={{ fontWeight: 700, color: 'var(--text)' }}>{opp.playerName}</span>
-            <span>Bal: ${formatMoney(opp.balance ?? 0)}</span>
-            <span>{opp.phase ?? ''}</span>
-          </div>
+          <OpponentPanel key={opp.playerId} opp={opp} />
         ))}
       </div>
 

@@ -226,6 +226,10 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [readySent, setReadySent] = useState(false);
   const pollRef = useRef(null);
+  // Step 6e B1: lets markReady() trigger one immediate /state fetch so the
+  // overlay advances straight to the countdown / handoff without waiting for
+  // the next 500ms tick.
+  const pollNowRef = useRef(null);
   // G1 (step 6b.2): this lobby owns the room membership from create/join until
   // the room reaches PLAYING - which is why it, and not App, has to leave the
   // room when the player walks out (three cases on the effect below).
@@ -275,6 +279,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
 
   useEffect(() => {
     if (!activeRoomId) {
+      pollNowRef.current = null;
       if (pollRef.current) {
         clearInterval(pollRef.current);
         pollRef.current = null;
@@ -282,7 +287,9 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
       return;
     }
 
-    pollRef.current = setInterval(async () => {
+    let settled = false;
+    const pollNow = async () => {
+      if (settled) return;
       try {
         const st = await roomsApi.getRoomState(activeRoomId);
         setRoomPhase(st.roomPhase);
@@ -292,20 +299,34 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         }
 
         if (st.roomPhase === 'PLAYING' || st.roomPhase === 'GAME_OVER') {
-          clearInterval(pollRef.current);
-          pollRef.current = null;
+          settled = true;
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
           handedOffRef.current = true;
           onEnterGame(activeRoomId, gameKey);
         }
       } catch {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
+        settled = true;
+        if (pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
         setActiveRoomId(null);
       }
-    }, 500);
+    };
+
+    pollNowRef.current = pollNow;
+    // Step 6e B1: poll immediately so the ready overlay renders its content on
+    // the first frame instead of staying blank until the first 500ms tick.
+    pollNow();
+    pollRef.current = setInterval(pollNow, 500);
 
     return () => {
+      pollNowRef.current = null;
       if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = null;
     };
   }, [activeRoomId, gameKey, onEnterGame]);
 
@@ -323,6 +344,10 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         onEnterGame(summary.roomId, gameKey);
       } else {
         setActiveRoomId(summary.roomId);
+        // Step 6e B1: refresh the list so the new room shows up right away when
+        // we return to it, instead of waiting for the next 5s poll. The ready
+        // overlay's own /state is fetched immediately by the poll effect above.
+        fetchRooms();
       }
     } catch (err) {
       setError(err.message);
@@ -348,6 +373,9 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         onEnterGame(summary.roomId, gameKey);
       } else {
         setActiveRoomId(summary.roomId);
+        // Step 6e B1: refresh the list so the room we just joined is current
+        // when we return to it, instead of waiting for the next 5s poll.
+        fetchRooms();
       }
     } catch (err) {
       setError(err.message);
@@ -371,7 +399,12 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
           playerId={playerId}
           roomPhase={roomPhase}
           timeRemaining={timeRemaining}
-          onReadySent={() => setReadySent(true)}
+          onReadySent={() => {
+            setReadySent(true);
+            // Step 6e B1: hit /state once more so the countdown / handoff shows
+            // immediately after readying, not on the next 500ms tick.
+            pollNowRef.current?.();
+          }}
           onAuthError={handleReadyAuthError}
         />
       </div>

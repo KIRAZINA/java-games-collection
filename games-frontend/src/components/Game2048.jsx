@@ -98,7 +98,7 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
       }
     };
 
-    stateInterval = setInterval(async () => {
+    const pollState = async () => {
       try {
         const roomState = await roomsApi.getRoomState(roomId);
         if (cancelled || stopped) return;
@@ -111,7 +111,13 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
       } catch (err) {
         onPollFailure(err);
       }
-    }, 1000);
+    };
+
+    // Step 6e B1: fire the first /state on mount so the room phase (and the
+    // countdown for timed games) populate on the first frame instead of
+    // waiting up to 1000ms.
+    pollState();
+    stateInterval = setInterval(pollState, 1000);
 
     progressInterval = setInterval(async () => {
       try {

@@ -91,13 +91,15 @@ describe('Area 3 - polling cleanup and error resilience', () => {
     await flushMicrotasks();
 
     await advance(1000);
-    expect(roomsApi.getRoomState).toHaveBeenCalledTimes(1);
+    // Step 6e B1: /state now fires once on mount AND once on the 1s tick -
+    // two in-flight (still-pending) requests before unmount.
+    expect(roomsApi.getRoomState).toHaveBeenCalledTimes(2);
 
     unmount();
     resolvePoll(playingState);
     await advance(10000);
 
-    expect(roomsApi.getRoomState).toHaveBeenCalledTimes(1);
+    expect(roomsApi.getRoomState).toHaveBeenCalledTimes(2);
     expect(roomsApi.getRoomProgress).not.toHaveBeenCalled();
     expect(errSpy).not.toHaveBeenCalled();
     errSpy.mockRestore();
@@ -172,10 +174,12 @@ describe('Area 3 - polling cleanup and error resilience', () => {
     render(<Blackjack roomId="r-1" playerId="p-1" playerName="Pat" />);
     await flushMicrotasks();
 
-    await advance(1000); // tick 1 → 500 (tolerated)
+    // Step 6e B1: the initial fetch fires on mount and eats the single 500
+    // (tolerated); both 1s ticks after it succeed.
+    await advance(1000); // tick 1 → success
     await advance(1000); // tick 2 → success
 
-    expect(roomsApi.getRoomState).toHaveBeenCalledTimes(2);
+    expect(roomsApi.getRoomState).toHaveBeenCalledTimes(3);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByText('BETTING')).toBeInTheDocument();
   });
