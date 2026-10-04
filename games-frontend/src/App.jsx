@@ -122,10 +122,12 @@ function App() {
   }
 
   async function handleQuickPlay(gameKey) {
-    if (!playerName) {
-      const name = prompt('Enter your display name:', 'Player');
-      setPlayerName(name || `Player-${playerId.slice(-4)}`);
-    }
+    // F2: resolve the display name into a local first. setPlayerName does not
+    // commit before the createRoom call below, so reading the state variable
+    // here sent ownerName: "" and Part A's @NotBlank returned 400.
+    const displayName =
+      playerName || prompt('Enter your display name:', 'Player') || `Player-${playerId.slice(-4)}`;
+    if (!playerName) setPlayerName(displayName);
 
     if (currentRoom) {
       try {
@@ -154,11 +156,11 @@ function App() {
 
     try {
       const summary = await roomsApi.createRoom(
-        `${playerName}'s Practice`,
+        `${displayName}'s Practice`,
         gameType,
         gameSettings,
         playerId,
-        playerName
+        displayName
       );
       setRoomToken(summary.roomId, summary.playerToken);
       handleEnterGame(summary.roomId, gameKey);
