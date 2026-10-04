@@ -145,9 +145,18 @@ public class GameRoomController {
         roomService.registerPlayerSession(roomId, request.playerId(), request.sessionId());
     }
 
+    /**
+     * Marks the player ready and rotates their token (Step 6b.3): the value
+     * that authenticated THIS request stops working, and the replacement rides
+     * back in the response body. Clients must store it before their next
+     * authenticated call - the room games register their session the moment the
+     * match starts. An idempotent replay returns the same rotated token rather
+     * than rotating twice, so a retried request cannot strand the client with a
+     * token the server has already discarded.
+     */
     @PostMapping("/{roomId}/ready")
     @ResponseStatus(HttpStatus.OK)
-    public void markReady(
+    public ReadyResponse markReady(
             @PathVariable("roomId") String roomId,
             @Valid @RequestBody MarkReadyRequest request,
             @RequestHeader(value = "Idempotency-Key", required = false) String idKey,
@@ -155,18 +164,21 @@ public class GameRoomController {
         roomService.verifyPlayerToken(roomId, request.playerId(), playerToken);
         if (idKey != null && !idKey.isEmpty()) {
             try {
-                idempotencyService.execute("rooms:ready", roomId + ":" + request.playerId(), idKey, () -> {
-                    roomService.markPlayerReady(roomId, request.playerId());
-                    return null;
-                }, r -> new IdempotencyService.CachedResponseSnapshot(200, ""));
+                ReadyResponse result = idempotencyService.execute("rooms:ready", roomId + ":" + request.playerId(), idKey,
+                        () -> {
+                            roomService.markPlayerReady(roomId, request.playerId());
+                            return new ReadyResponse(roomService.rotatePlayerToken(roomId, request.playerId()));
+                        },
+                        r -> snapshot200(r));
+                return result;
             } catch (IdempotencyService.IdempotencyReplayException replay) {
-                return;
+                return new com.fasterxml.jackson.databind.ObjectMapper().readValue(replay.body, ReadyResponse.class);
             } catch (IdempotencyService.IdempotencyInProgressException inProgress) {
                 throw new IllegalStateException("Duplicate request in progress");
             }
-            return;
         }
         roomService.markPlayerReady(roomId, request.playerId());
+        return new ReadyResponse(roomService.rotatePlayerToken(roomId, request.playerId()));
     }
 
     private static IdempotencyService.CachedResponseSnapshot snapshot200(Object value) {
@@ -213,4 +225,6 @@ public class GameRoomController {
     public record MarkReadyRequest(
             @NotBlank(message = "must not be blank") String playerId
     ) {}
+
+    public record ReadyResponse(String playerToken) {}
 }

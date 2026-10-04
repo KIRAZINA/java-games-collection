@@ -571,6 +571,29 @@ public class GameRoomService {
         }
     }
 
+    /**
+     * Replaces a member's token with a freshly minted one, invalidating the
+     * value they just authenticated with (token rotation, Step 6b.3). Called
+     * only after the caller has verified the old token and the action it
+     * guarded succeeded, so a leaked token dies the moment its holder's
+     * standing changes - currently when a player commits to the match via
+     * POST /{roomId}/ready. Kept distinct from issuePlayerToken, which must
+     * stay idempotent for create/join/spectate replays.
+     */
+    public String rotatePlayerToken(String roomId, String playerId) {
+        GameRoom room = rooms.get(roomId);
+        if (room == null) throw new ResourceNotFoundException("Room not found: " + roomId);
+        synchronized (room) {
+            if (!rooms.containsKey(roomId)) throw new ResourceNotFoundException("Room not found: " + roomId);
+            boolean member = room.hasPlayer(playerId)
+                    || room.getSpectators().stream().anyMatch(p -> p.id().equals(playerId));
+            if (!member) throw new IllegalArgumentException("Player not in room");
+            String fresh = UUID.randomUUID().toString();
+            playerTokens.computeIfAbsent(roomId, id -> new ConcurrentHashMap<>()).put(playerId, fresh);
+            return fresh;
+        }
+    }
+
     public void verifyPlayerToken(String roomId, String playerId, String providedToken) {
         GameRoom room = rooms.get(roomId);
         if (room == null) throw new ResourceNotFoundException("Room not found: " + roomId);

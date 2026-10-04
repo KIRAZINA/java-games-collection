@@ -472,6 +472,112 @@ class PlayerTokenTest {
                 .andExpect(jsonPath("$.path").doesNotExist());
     }
 
+    // ============================================================ Rotation (Step 6b.3)
+
+    @Test
+    @DisplayName("24. POST /{roomId}/ready rotates the token: fresh value returned, old token dead, new one works")
+    void readyRotatesPlayerToken() throws Exception {
+        MvcResult created = createRoom("guard-24", "Guard Twenty Four", "Guard Ready Rotate");
+        String roomId = roomId(created);
+        String before = playerToken(created);
+
+        MvcResult ready = mockMvc.perform(post("/api/rooms/{roomId}/ready", roomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, before)
+                        .content("""
+                                {"playerId":"guard-24"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.playerToken").isNotEmpty())
+                .andReturn();
+        String after = playerToken(ready);
+        assertThat(after).isNotBlank().isNotEqualTo(before);
+
+        // The token that authenticated the rotation is no longer a credential
+        mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, before)
+                        .content("""
+                                {"playerId":"guard-24"}"""))
+                .andExpect(status().isForbidden());
+
+        // The rotated token is the live one
+        mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, after)
+                        .content("""
+                                {"playerId":"guard-24"}"""))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    @DisplayName("25. Ready replay with the SAME key and the CURRENT token returns the cached token - never a second rotation")
+    void readyIdempotentReplayDoesNotRotateTwice() throws Exception {
+        MvcResult created = createRoom("guard-25", "Guard Twenty Five", "Guard Ready Replay");
+        String roomId = roomId(created);
+        String before = playerToken(created);
+
+        MvcResult first = mockMvc.perform(post("/api/rooms/{roomId}/ready", roomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, before)
+                        .header("Idempotency-Key", "ready-replay-key")
+                        .content("""
+                                {"playerId":"guard-25"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.playerToken").isNotEmpty())
+                .andReturn();
+        String rotated = playerToken(first);
+        assertThat(rotated).isNotEqualTo(before);
+
+        // Same key, now authenticated with the token the first call returned:
+        // the cached body comes back instead of minting another token. This is
+        // the double-submit case where the client already stored the rotation.
+        MvcResult replay = mockMvc.perform(post("/api/rooms/{roomId}/ready", roomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, rotated)
+                        .header("Idempotency-Key", "ready-replay-key")
+                        .content("""
+                                {"playerId":"guard-25"}"""))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.playerToken").isNotEmpty())
+                .andReturn();
+
+        assertThat(playerToken(replay)).isEqualTo(rotated);
+
+        // Load-bearing check: if the replay had rotated again, this token would
+        // now be dead and the leave would 403.
+        mockMvc.perform(delete("/api/rooms/{roomId}/leave", roomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, rotated)
+                        .content("""
+                                {"playerId":"guard-25"}"""))
+                .andExpect(status().isNoContent());
+
+        // Deliberate trade-off, asserted so it cannot silently change: a retry
+        // still carrying the PRE-rotation token is rejected before idempotency
+        // is even consulted. Rotation means stale credentials are dead; the
+        // recovery for a client that lost the ready response is the existing
+        // rejoin flow (the same 403 path B5 drives in the browser).
+        String deadRoom = roomId(created);
+        MvcResult secondRoom = createRoom("guard-25b", "Guard Twenty Five B", "Guard Ready Dead Retry");
+        String deadRoomId = roomId(secondRoom);
+        String deadBefore = playerToken(secondRoom);
+        mockMvc.perform(post("/api/rooms/{roomId}/ready", deadRoomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, deadBefore)
+                        .header("Idempotency-Key", "dead-retry-key")
+                        .content("""
+                                {"playerId":"guard-25b"}"""))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/rooms/{roomId}/ready", deadRoomId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .header(TOKEN_HEADER, deadBefore)
+                        .header("Idempotency-Key", "dead-retry-key")
+                        .content("""
+                                {"playerId":"guard-25b"}"""))
+                .andExpect(status().isForbidden());
+        assertThat(deadRoom).isNotBlank();
+    }
+
     // ============================================================ Helpers
 
     private MvcResult createRoom(String ownerId, String ownerName, String roomName) throws Exception {
