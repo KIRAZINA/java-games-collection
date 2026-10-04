@@ -133,3 +133,51 @@ describe('G1 - a multiplayer room waits in the lobby for the ready step', () => 
     expect(screen.queryByText('Waiting for players')).not.toBeInTheDocument();
   });
 });
+
+describe('solo non-blackjack rooms hand off from the lobby to the game', () => {
+  // Coverage, not a regression guard: solo non-blackjack has always routed
+  // through RoomLobby (6b.2 only changed the multiplayer branch). B5 covered
+  // this path until F5 turned B5 into a multiplayer room, so nothing exercised
+  // "solo room created in the lobby -> phase poll -> game component" after that.
+  let createRoom;
+  let leaveRoom;
+
+  beforeEach(() => {
+    createRoom = vi.spyOn(roomsApi, 'createRoom').mockResolvedValue({
+      roomId: 'r-solo-handoff',
+      playerToken: 'tok-solo',
+      isSinglePlayer: true,
+    });
+    // solo rooms are created already PLAYING (GameRoomService.createRoom)
+    vi.spyOn(roomsApi, 'getRoomState').mockResolvedValue({
+      roomPhase: 'PLAYING',
+      timeRemaining: 60,
+      players: [],
+      playerCount: 1,
+    });
+    leaveRoom = vi.spyOn(roomsApi, 'leaveRoom').mockResolvedValue(undefined);
+    vi.stubGlobal('prompt', vi.fn(() => 'Alice'));
+    stubNetwork();
+  });
+
+  it('opens the game component on the first poll and does not leave the room behind', async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole('button', { name: /Play Minesweeper/ }));
+    await user.click(screen.getByRole('button', { name: '+ Create Room' }));
+    await user.click(screen.getByRole('checkbox', { name: /Single Player/i }));
+    await user.type(screen.getByLabelText('Room Name'), 'Solo Room');
+    await user.click(screen.getByRole('button', { name: 'Create Room' }));
+
+    expect(await screen.findByText('Minesweeper Lobby')).toBeInTheDocument();
+
+    // the poll sees PLAYING and hands off to the game component
+    await screen.findByRole('heading', { name: /^Minesweeper$/ }, { timeout: 4000 });
+    expect(screen.queryByText('Minesweeper Lobby')).not.toBeInTheDocument();
+    expect(createRoom.mock.calls[0][2].isSinglePlayer).toBe(true);
+
+    // case 1 of the ownership effect: handing off must not abandon the room
+    expect(leaveRoom).not.toHaveBeenCalled();
+  });
+});
