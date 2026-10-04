@@ -404,6 +404,16 @@ select {
   background: #ffebee;
 }
 
+/* Settled room result (Step 6b.3): rendered under the GAME_OVER banner by
+   both room-timed games with the exact "Winner: <name> (<score>)" wording the
+   e2e pins. */
+.winner-line {
+  margin: 8px 0 0;
+  text-align: center;
+  font-weight: 700;
+  color: #1b5e20;
+}
+
 /* ─── Ready Check Overlay ──────────────────────────────────────────── */
 
 .ready-check-overlay {

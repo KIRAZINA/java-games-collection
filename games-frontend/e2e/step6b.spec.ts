@@ -283,13 +283,23 @@ test('B3 - two-player 2048 room settles to GAME_OVER after the 8s time limit', a
   // The room settles to GAME_OVER after the 8s time limit - both pages see it
   await expect(pageA.getByText("Time's Up!")).toBeVisible({ timeout: 20000 });
   await expect(pageB.getByText("Time's Up!")).toBeVisible({ timeout: 20000 });
-  const state = await request.get(`/api/rooms/${roomId}/state`);
-  expect((await state.json()).roomPhase).toBe('GAME_OVER');
 
-  // "and a winner": settleGame() computes winnerId/winnerScore (GameRoomService:370-401),
-  // but neither RoomStateResponse, RoomProgressResponse, RoomSummary nor any UI
-  // element exposes it - nothing observable to assert beyond GAME_OVER above
-  // (reported as a finding, not fixed: B-series is zero production fixes).
+  // "and a winner" (STEP_6b.md:86): settleGame()'s winnerId/winnerScore were
+  // computed but unobservable (reported as a finding in 6b Part B). Step 6b.3
+  // exposes them on GET /state and both room-timed games render
+  // "Winner: <name> (<score>)" from that payload.
+  await expect(pageA.getByText(/^Winner: /)).toBeVisible({ timeout: 20000 });
+  await expect(pageB.getByText(/^Winner: /)).toBeVisible({ timeout: 20000 });
+  const winnerA = await pageA.getByText(/^Winner: /).innerText();
+  const winnerB = await pageB.getByText(/^Winner: /).innerText();
+  expect(winnerA).toBe(winnerB);
+
+  const state = await request.get(`/api/rooms/${roomId}/state`);
+  const stateJson = await state.json();
+  expect(stateJson.roomPhase).toBe('GAME_OVER');
+  expect(typeof stateJson.winnerId).toBe('string');
+  expect(stateJson.winnerId.length).toBeGreaterThan(0);
+  expect(typeof stateJson.winnerScore).toBe('number');
 
   await ctxA.close();
   await ctxB.close();

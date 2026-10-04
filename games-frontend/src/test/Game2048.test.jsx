@@ -11,9 +11,14 @@ vi.mock('../api/api.js', () => ({
     reset: vi.fn(),
     closeSession: vi.fn(),
   },
+  roomsApi: {
+    getRoomState: vi.fn(),
+    getRoomProgress: vi.fn(),
+    registerSession: vi.fn(),
+  },
 }));
 
-import { game2048Api } from '../api/api.js';
+import { game2048Api, roomsApi } from '../api/api.js';
 
 // ─── Shared test state fixtures ───────────────────────────────────────────────
 const initialState = {
@@ -207,5 +212,59 @@ describe('Game2048 Component', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent('Failed to create session');
     });
+  });
+});
+
+// ── Settled room winner (Step 6b.3) ─────────────────────────────────────────
+describe('Game2048 settled room winner', () => {
+  const settledRoomState = {
+    roomId: 'r-win',
+    gameType: 'TWENTY_FORTY_EIGHT',
+    state: 'PLAYING',
+    playerCount: 1,
+    players: [{ playerId: 'p-1', playerName: 'Alice', metrics: { score: 4242 } }],
+    roomPhase: 'GAME_OVER',
+    timeRemaining: 0,
+    gameStartTime: 0,
+    allPlayersReady: true,
+    readyCount: 1,
+    totalPlayers: 1,
+    winnerId: 'p-1',
+    winnerScore: 4242,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    game2048Api.createSession.mockResolvedValue(initialState);
+    // registerSession(...).catch(...) runs on mount for any roomId
+    roomsApi.registerSession.mockResolvedValue(undefined);
+    roomsApi.getRoomProgress.mockResolvedValue({
+      roomPhase: 'GAME_OVER',
+      timeRemaining: 0,
+      players: [],
+    });
+  });
+
+  it('shows the winner reported by GET /state once the room settles', async () => {
+    roomsApi.getRoomState.mockResolvedValue(settledRoomState);
+    render(<Game2048 roomId="r-win" playerId="p-1" playerName="Alice" />);
+
+    // The room settles on the scheduler: first state tick lands ~1s after mount
+    expect(await screen.findByText("Time's Up!", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByRole('status', {}, { timeout: 4000 })).toHaveTextContent(
+      'Winner: Alice (4242)'
+    );
+  });
+
+  it('shows no winner line when the room settles without an extractable winner', async () => {
+    roomsApi.getRoomState.mockResolvedValue({
+      ...settledRoomState,
+      winnerId: null,
+      winnerScore: null,
+    });
+    render(<Game2048 roomId="r-win" playerId="p-1" playerName="Alice" />);
+
+    expect(await screen.findByText("Time's Up!", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });

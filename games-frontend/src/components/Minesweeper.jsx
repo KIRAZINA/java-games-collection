@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { GameHeader } from './Blackjack.jsx';
 import { minesweeperApi, roomsApi } from '../api/api.js';
+import { roomWinnerLabel } from './roomWinner.js';
 
 function renderMineCell(cell) {
   if (!cell) return '';
@@ -29,6 +30,7 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
   const [opponentAlert, setOpponentAlert] = useState('');
   const [roomPhase, setRoomPhase] = useState('LOBBY');
   const [timeRemaining, setTimeRemaining] = useState(0);
+  const [winnerLabel, setWinnerLabel] = useState(null);
   const sessionIdRef = useRef(null);
   const prevOpponentsRef = useRef([]);
   const registeredRef = useRef(false);
@@ -100,6 +102,7 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
         if (cancelled || stopped) return;
         pollFailuresRef.current = 0;
         setRoomPhase(roomState.roomPhase);
+        setWinnerLabel(roomWinnerLabel(roomState));
         if (roomState.roomPhase === 'PLAYING') {
           setTimeRemaining(roomState.timeRemaining);
         }
@@ -245,6 +248,10 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
         <div className="timer-display timer-expired">
           Time's Up!
         </div>
+      )}
+
+      {roomPhase === 'GAME_OVER' && winnerLabel && (
+        <p className="winner-line" role="status">Winner: {winnerLabel}</p>
       )}
 
       {opponentAlert && (

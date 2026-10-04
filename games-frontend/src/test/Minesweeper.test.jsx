@@ -12,11 +12,16 @@ vi.mock('../api/api.js', () => ({
     reset: vi.fn(),
     closeSession: vi.fn(),
   },
+  roomsApi: {
+    getRoomState: vi.fn(),
+    getRoomProgress: vi.fn(),
+    registerSession: vi.fn(),
+  },
   // GameHeader is imported in Minesweeper via Blackjack — stub it
   blackjackApi: {},
 }));
 
-import { minesweeperApi } from '../api/api.js';
+import { minesweeperApi, roomsApi } from '../api/api.js';
 
 // ─── Fixtures ─────────────────────────────────────────────────────────────────
 
@@ -190,6 +195,47 @@ describe('Minesweeper Component', () => {
     render(<Minesweeper />);
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent('Board error')
+    );
+  });
+});
+
+// ── Settled room winner (Step 6b.3) ─────────────────────────────────────────
+describe('Minesweeper settled room winner', () => {
+  const settledRoomState = {
+    roomId: 'r-ms-win',
+    gameType: 'MINESWEEPER',
+    state: 'PLAYING',
+    playerCount: 1,
+    players: [{ playerId: 'p-1', playerName: 'Bob', metrics: { score: 120 } }],
+    roomPhase: 'GAME_OVER',
+    timeRemaining: 0,
+    gameStartTime: 0,
+    allPlayersReady: true,
+    readyCount: 1,
+    totalPlayers: 1,
+    winnerId: 'p-1',
+    winnerScore: 120,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    minesweeperApi.createSession.mockResolvedValue(initialState);
+    // registerSession(...).catch(...) runs on mount for any roomId
+    roomsApi.registerSession.mockResolvedValue(undefined);
+    roomsApi.getRoomProgress.mockResolvedValue({
+      roomPhase: 'GAME_OVER',
+      timeRemaining: 0,
+      players: [],
+    });
+  });
+
+  it('shows the winner reported by GET /state once the room settles', async () => {
+    roomsApi.getRoomState.mockResolvedValue(settledRoomState);
+    render(<Minesweeper roomId="r-ms-win" playerId="p-1" playerName="Bob" />);
+
+    expect(await screen.findByText("Time's Up!", {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(await screen.findByRole('status', {}, { timeout: 4000 })).toHaveTextContent(
+      'Winner: Bob (120)'
     );
   });
 });
