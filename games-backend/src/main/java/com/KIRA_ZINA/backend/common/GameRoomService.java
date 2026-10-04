@@ -274,6 +274,9 @@ public class GameRoomService {
 
         long timeRemaining = calculateTimeRemaining(room);
 
+        String winnerId = room.getWinnerId();
+        Integer winnerScore = winnerId == null ? null : room.getWinnerScore();
+
         return new RoomStateResponse(
                 roomId,
                 room.getSettings().gameType().name(),
@@ -285,7 +288,9 @@ public class GameRoomService {
                 room.getGameStartTime(),
                 room.allPlayersReady(),
                 room.getReadyPlayers().size(),
-                room.getPlayerCount()
+                room.getPlayerCount(),
+                winnerId,
+                winnerScore
         );
     }
 

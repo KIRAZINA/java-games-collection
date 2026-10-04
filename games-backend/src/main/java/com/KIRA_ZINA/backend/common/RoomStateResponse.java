@@ -14,7 +14,13 @@ public record RoomStateResponse(
         long gameStartTime,
         boolean allPlayersReady,
         int readyCount,
-        int totalPlayers
+        int totalPlayers,
+        // Settled-result exposure (Step 6b.3): settleGame() computes both on
+        // GameRoom but nothing observable carried them before this. Both stay
+        // null until the room actually reaches GAME_OVER with a winner, so a
+        // null winnerId means "not settled (or no score could be extracted)".
+        String winnerId,
+        Integer winnerScore
 ) {
     public record PlayerState(
             String playerId,
