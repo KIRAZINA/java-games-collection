@@ -140,10 +140,16 @@ async function initTicks(page) {
   });
 }
 
-function printWaterfall(events, from, to, title) {
+function printWaterfall(events, from, to, title, labelFilter) {
   console.log(`  -- network waterfall (${title}) --`);
   const net = events
-    .filter((e) => (e.kind === 'net' || e.kind === 'net-failed') && e.t >= from && e.t <= to)
+    .filter(
+      (e) =>
+        (e.kind === 'net' || e.kind === 'net-failed') &&
+        e.label === labelFilter &&
+        e.t >= from &&
+        e.t <= to
+    )
     .sort((a, b) => a.t - b.t);
   if (net.length === 0) console.log('    (no /api/ requests in window)');
   for (const e of net) {
@@ -154,7 +160,12 @@ function printWaterfall(events, from, to, title) {
     );
   }
   const headers = events.filter(
-    (e) => e.kind === 'net-headers' && e.t >= from && e.t <= to && e.method !== 'GET'
+    (e) =>
+      e.kind === 'net-headers' &&
+      e.label === labelFilter &&
+      e.t >= from &&
+      e.t <= to &&
+      e.method !== 'GET'
   );
   for (const e of headers) {
     const url = e.url.replace(/^https?:\/\/[^/]+/, '');
@@ -195,7 +206,7 @@ async function traceQuickPlay(browser, game, events) {
   const tGame = now();
   console.log(`  quickplay-click -> first game element: ${tGame - tQp} ms`);
 
-  printWaterfall(events, tQp, tGame + 500, `${game.key} path Q`);
+  printWaterfall(events, tQp, tGame + 500, `${game.key} path Q`, `Q:${game.key}`);
   await printTicks(page, tQp, tGame);
 
   const opts = events.filter(
@@ -245,9 +256,9 @@ async function traceCreateRoom(browser, game, events) {
   const tFriend = now();
   console.log(`  form-submit -> room visible in friend's list: ${tFriend - tSubmit} ms`);
 
-  printWaterfall(events, tSubmit, tReady + 500, `${game.key} creator`);
+  printWaterfall(events, tSubmit, tReady + 500, `${game.key} creator`, `C:${game.key}:creator`);
   await printTicks(pageA, tSubmit, tReady);
-  printWaterfall(events, tFormOpen, tFriend + 200, `${game.key} friend`);
+  printWaterfall(events, tFormOpen, tFriend + 200, `${game.key} friend`, `C:${game.key}:friend`);
 
   const opts = events.filter(
     (e) => e.kind === 'cors-preflight' && e.label.startsWith(`C:${game.key}`)

@@ -119,7 +119,7 @@ async function snapshot(roomId, name, prev) {
   console.log(`--- SNAPSHOT ${name} : GET /progress (verbatim) ---`);
   console.log(JSON.stringify(pr, null, 2));
   if (prev) {
-    const d = diffFlat(prev.state, st);
+    const d = diffFlat(prev.st, st);
     console.log(`  /state field changes vs previous snapshot:`);
     console.log(d.length ? d.join('\n') : '      (none)');
   }
