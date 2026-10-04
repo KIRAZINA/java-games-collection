@@ -413,6 +413,9 @@ select {
   display: grid;
   place-items: center;
   z-index: 200;
+  /* The dim layer spans the viewport but must not swallow clicks: while a room
+     is waiting, the shell behind it (Home, the game tabs) has to stay usable. */
+  pointer-events: none;
 }
 
 .ready-check-card {
@@ -422,6 +425,7 @@ select {
   text-align: center;
   max-width: 420px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  pointer-events: auto;
 }
 
 .ready-check-card h2 {

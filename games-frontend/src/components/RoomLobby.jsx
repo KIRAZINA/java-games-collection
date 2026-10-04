@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { roomsApi, setRoomToken, clearRoomToken } from '../api/api.js';
+import { roomsApi, setRoomToken, clearRoomToken, getRoomToken } from '../api/api.js';
 import { GameHeader } from './Blackjack.jsx';
 
 const GAME_LABELS = {
@@ -220,6 +220,30 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [readySent, setReadySent] = useState(false);
   const pollRef = useRef(null);
+  // G1 (step 6b.2): this lobby owns the room membership until the room reaches
+  // PLAYING, so leaving the lobby (Home, another game tab, a remount) must
+  // leave the room too - App's own leave only knows about currentRoom, which
+  // is set later, when the game actually opens. handedOffRef marks the moment
+  // the game takes over so the leave below never fires on entering a game.
+  const handedOffRef = useRef(false);
+
+  useEffect(() => {
+    if (!activeRoomId) return undefined;
+    return () => {
+      if (handedOffRef.current) return;
+      // /leave verifies X-Player-Token: with no token the auth-loss path has
+      // already cleaned up, and the request could only 403.
+      if (!getRoomToken(activeRoomId)) return;
+      roomsApi.leaveRoom(activeRoomId, playerId).catch(() => {});
+      clearRoomToken(activeRoomId);
+    };
+  }, [activeRoomId, playerId]);
+
+  // Switching games while waiting would otherwise keep showing the old room's
+  // overlay under the new game's lobby; dropping the room runs the leave above.
+  useEffect(() => {
+    setActiveRoomId(null);
+  }, [gameKey]);
 
   const fetchRooms = useCallback(async () => {
     try {
@@ -259,6 +283,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         if (st.roomPhase === 'PLAYING' || st.roomPhase === 'GAME_OVER') {
           clearInterval(pollRef.current);
           pollRef.current = null;
+          handedOffRef.current = true;
           onEnterGame(activeRoomId, gameKey);
         }
       } catch {
@@ -279,10 +304,14 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
     try {
       const summary = await roomsApi.createRoom(roomName, gameType, gameSettings, playerId, playerName);
       setRoomToken(summary.roomId, summary.playerToken);
-      if (summary.isSinglePlayer && gameKey !== 'blackjack') {
-        setActiveRoomId(summary.roomId);
-      } else {
+      // G1 (step 6b.2): every room that still has a ready step waits in this
+      // lobby - the game components' waiting cards have no way to mark a player
+      // ready, so sending players there meant nobody could ever start a
+      // multiplayer game. Only a solo blackjack room skips straight through.
+      if (summary.isSinglePlayer && gameKey === 'blackjack') {
         onEnterGame(summary.roomId, gameKey);
+      } else {
+        setActiveRoomId(summary.roomId);
       }
     } catch (err) {
       setError(err.message);
@@ -303,10 +332,11 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
     try {
       const summary = await roomsApi.joinRoom(room.roomId, playerId, playerName, password || undefined);
       setRoomToken(summary.roomId, summary.playerToken);
-      if (room.isSinglePlayer && gameKey !== 'blackjack') {
-        setActiveRoomId(room.roomId);
+      // G1 (step 6b.2): same rule as create - wait here until PLAYING.
+      if (room.isSinglePlayer && gameKey === 'blackjack') {
+        onEnterGame(summary.roomId, gameKey);
       } else {
-        onEnterGame(room.roomId, gameKey);
+        setActiveRoomId(summary.roomId);
       }
     } catch (err) {
       setError(err.message);
