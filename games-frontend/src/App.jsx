@@ -5,6 +5,7 @@ import { Blackjack } from './components/Blackjack.jsx';
 import { Minesweeper } from './components/Minesweeper.jsx';
 import { Game2048 } from './components/Game2048.jsx';
 import { ConfirmNavigationModal } from './components/ConfirmNavigationModal.jsx';
+import { SiteFooter } from './components/SiteFooter.jsx';
 import { roomsApi, setRoomToken, clearRoomToken, rehydrateRoomTokens } from './api/api.js';
 
 const GAME_TYPE_MAP = {
@@ -237,10 +238,11 @@ function App() {
           </button>
         </div>
         {playerName && (
-          <p style={{ margin: 'auto 0 0', fontSize: '0.78rem', color: '#607088' }}>
+          <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>
             Playing as <strong>{playerName}</strong>
           </p>
         )}
+        <SiteFooter />
       </aside>
 
       <section className="game-stage">

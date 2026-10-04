@@ -273,8 +273,8 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
       {/* ─── Notification Toast ───────────────────────────────────────── */}
       {state?.notifications?.length > 0 && (
         <div style={{
-          background: '#e8f0fd', border: '1px solid #3466a8', borderRadius: 6,
-          padding: '10px 14px', marginBottom: 8, color: '#1d3a6f', fontWeight: 600,
+          background: 'var(--surface-3)', border: '1px solid var(--border-strong)', borderRadius: 6,
+          padding: '10px 14px', marginBottom: 8, color: 'var(--text)', fontWeight: 600,
         }} role="alert">
           {state.notifications.map((msg, i) => (
             <p key={i} style={{ margin: '2px 0' }}>{msg}</p>
@@ -285,8 +285,8 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
       {/* ─── Bankruptcy Banner ────────────────────────────────────────── */}
       {isBankrupt && (
         <div style={{
-          background: '#fff3e0', border: '1px solid #e65100', borderRadius: 6,
-          padding: '12px 14px', marginBottom: 8, color: '#bf360c', fontWeight: 600,
+          background: 'var(--surface-2)', border: '1px solid var(--warning)', borderRadius: 6,
+          padding: '12px 14px', marginBottom: 8, color: 'var(--warning)', fontWeight: 600,
         }} role="alert">
           You are out of funds! The next hand will be skipped, and your balance will be refilled automatically.
         </div>
@@ -310,6 +310,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
         </button>
         <button
           id="bj-new-round"
+          className="btn-primary"
           onClick={handleNewRound}
           disabled={!state || busy}
         >
@@ -338,8 +339,8 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
         </div>
 
         {opponents.map((opp) => (
-          <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
-            <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
+        <div key={opp.playerId} className="status-strip" style={{ borderLeft: '3px solid var(--border-strong)', paddingLeft: 10 }}>
+          <span style={{ fontWeight: 700, color: 'var(--text)' }}>{opp.playerName}</span>
             <span>Bal: ${formatMoney(opp.balance ?? 0)}</span>
             <span>{opp.phase ?? ''}</span>
           </div>
@@ -359,6 +360,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
         </label>
         <button
           id="bj-place-bet"
+          className="btn-primary"
           onClick={() => run(() => blackjackApi.placeBet(sessionId, Number(bet)))}
           disabled={!state || state.phase !== 'BETTING' || busy}
         >
@@ -366,6 +368,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
         </button>
         <button
           id="bj-hit"
+          className="btn-primary"
           onClick={() => run(() => blackjackApi.hit(sessionId))}
           disabled={!state || state.phase !== 'PLAYER_TURN' || busy}
         >
@@ -373,6 +376,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
         </button>
         <button
           id="bj-stand"
+          className="btn-primary"
           onClick={() => run(() => blackjackApi.stand(sessionId))}
           disabled={!state || state.phase !== 'PLAYER_TURN' || busy}
         >
@@ -381,7 +385,7 @@ export function Blackjack({ roomId, playerId, playerName, onExit }) {
       </div>
 
       {countdown !== null && countdown > 0 && (
-        <p style={{ fontSize: '0.85rem', color: '#607088', marginTop: 6 }}>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: 6 }}>
           Next round starts in: {countdown}...
         </p>
       )}

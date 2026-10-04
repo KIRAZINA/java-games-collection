@@ -259,7 +259,7 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
       )}
 
       {opponentAlert && (
-        <p className="error-line" role="alert" style={{ borderLeftColor: '#3466a8', background: '#e8f0fd', color: '#1d3a6f' }}>
+        <p className="error-line" role="alert" style={{ borderLeftColor: 'var(--border-strong)', background: 'var(--surface-3)', color: 'var(--text)' }}>
           {opponentAlert}
         </p>
       )}
@@ -306,8 +306,8 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
           return (
             <div key={opp.playerId}
               className={`status-strip opponent-strip ${isOvertake ? 'score-overtake' : ''}`}
-              style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
-              <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
+              style={{ borderLeft: '3px solid var(--border-strong)', paddingLeft: 10 }}>
+              <span style={{ fontWeight: 700, color: 'var(--text)' }}>{opp.playerName}</span>
               <span>Score: {oppScore}</span>
               <span>Moves: {opp.movesMade ?? 0}</span>
               <span>{isGameOver ? 'Done' : 'Playing'}</span>
@@ -326,7 +326,7 @@ export function Game2048({ roomId, playerId, playerName, onExit }) {
               key={`${row}-${col}`}
               id={`g2048-tile-${index}`}
               className={`tile-2048 ${isIceBlock ? 'tile-ice-block' : `value-${value}`}`}
-              style={isIceBlock ? {} : { backgroundColor: TILE_COLORS[value] ?? '#3c3a32' }}
+              style={isIceBlock ? {} : { backgroundColor: TILE_COLORS[value] ?? 'var(--surface-3)' }}
               aria-label={isIceBlock ? 'Ice Block' : value ? `Tile ${value}` : 'Empty'}
             >
               {isIceBlock ? '🧊' : value || ''}

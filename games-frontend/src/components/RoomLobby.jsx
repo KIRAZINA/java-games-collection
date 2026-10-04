@@ -54,24 +54,24 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
 
   return (
     <div style={{
-      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
       display: 'grid', placeItems: 'center', zIndex: 100,
     }}>
       <form onSubmit={handleSubmit} style={{
-        background: '#fff', borderRadius: 10, padding: 24,
+        background: 'var(--surface)', borderRadius: 10, padding: 24,
         minWidth: 340, maxWidth: 420, display: 'grid', gap: 14,
-        border: '1px solid #dce3ec',
+        border: '1px solid var(--border)',
       }}>
         <h3 style={{ margin: 0 }}>Create {GAME_LABELS[gameKey]} Room</h3>
 
-        <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+        <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           Room Name
           <input value={roomName} onChange={(e) => setRoomName(e.target.value)} required />
         </label>
 
         {gameKey === 'blackjack' && (
           <>
-            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
               Dealer Difficulty
               <select value={settings.difficulty} onChange={(e) => setSettings({ ...settings, difficulty: e.target.value })}>
                 <option value="BASIC">Basic</option>
@@ -79,7 +79,7 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
                 <option value="AGGRESSIVE">Aggressive</option>
               </select>
             </label>
-            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
               Starting Balance
               <input type="number" min="1" value={settings.initialBalance}
                 onChange={(e) => setSettings({ ...settings, initialBalance: Number(e.target.value) })} />
@@ -89,17 +89,17 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
 
         {gameKey === 'minesweeper' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
               Rows
               <input type="number" min="4" max="30" value={settings.rows}
                 onChange={(e) => setSettings({ ...settings, rows: Number(e.target.value) })} />
             </label>
-            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
               Cols
               <input type="number" min="4" max="30" value={settings.cols}
                 onChange={(e) => setSettings({ ...settings, cols: Number(e.target.value) })} />
             </label>
-            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+            <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
               Mines
               <input type="number" min="1" value={settings.mines}
                 onChange={(e) => setSettings({ ...settings, mines: Number(e.target.value) })} />
@@ -108,7 +108,7 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
         )}
 
         {gameKey !== 'blackjack' && (
-          <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+          <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
             Time Limit
             <select value={timeLimitSeconds} onChange={(e) => setTimeLimitSeconds(Number(e.target.value))}>
               <option value={30}>30 seconds</option>
@@ -119,21 +119,21 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
         )}
 
         {gameKey !== 'blackjack' && (
-          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700, fontSize: '0.82rem', color: '#526174', cursor: 'pointer' }}>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)', cursor: 'pointer' }}>
             <input type="checkbox" checked={isSinglePlayer}
               onChange={(e) => setIsSinglePlayer(e.target.checked)} style={{ width: 'auto' }} />
             Single Player (practice mode)
           </label>
         )}
 
-        <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+        <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           Max Players
           <input type="number" min="1" max="8" value={effectiveMaxPlayers}
             onChange={(e) => setMaxPlayers(Number(e.target.value))}
             disabled={isSinglePlayer} />
         </label>
 
-        <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: '#526174' }}>
+        <label style={{ display: 'grid', gap: 4, fontWeight: 700, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           Password (optional)
           <input type="password" value={password} placeholder="Leave blank for public room"
             onChange={(e) => setPassword(e.target.value)} />
@@ -141,7 +141,7 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 6 }}>
           <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="submit" style={{ background: '#243e68', color: '#fff', borderColor: '#243e68' }}>
+          <button type="submit" className="btn-primary">
             Create Room
           </button>
         </div>
@@ -385,11 +385,11 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
       <div className="toolbar">
         <button onClick={fetchRooms} disabled={busy}>Refresh</button>
         <button onClick={() => onQuickPlay(gameKey)} disabled={busy}
-          style={{ background: '#1b5e20', color: '#fff', borderColor: '#1b5e20' }}>
+          className="btn-primary">
           ⚡ Quick Play (Solo)
         </button>
         <button onClick={() => setShowCreateForm(true)} disabled={busy}
-          style={{ background: '#243e68', color: '#fff', borderColor: '#243e68' }}>
+          className="btn-primary">
           + Create Room
         </button>
       </div>
@@ -398,7 +398,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
       {notice && <p className="error-line" role="alert">{notice}</p>}
 
       {rooms.length === 0 && !error && (
-        <p style={{ color: '#607088', padding: '1rem 0' }}>
+        <p style={{ color: 'var(--text-muted)', padding: '1rem 0' }}>
           No active rooms. Create one to get started!
         </p>
       )}
@@ -407,12 +407,12 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         {rooms.map((room) => (
           <div key={room.roomId} style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            border: '1px solid #d6deea', borderRadius: 8, background: '#fff',
+            border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface)',
             padding: '12px 16px',
           }}>
             <div>
               <strong>{room.roomName}</strong>
-              <div style={{ fontSize: '0.82rem', color: '#607088', marginTop: 4 }}>
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: 4 }}>
                 {room.playerCount}/{room.maxPlayers} players
                 {room.passwordProtected ? ' 🔒' : ''}
                 {room.phase !== 'LOBBY' ? ` — ${room.phase}` : ''}
@@ -422,6 +422,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
             </div>
             <button
               onClick={() => handleJoinRoom(room)}
+              className="btn-primary"
               disabled={busy || (room.phase !== 'LOBBY' && room.phase !== 'READY_CHECK') || room.playerCount >= room.maxPlayers}
             >
               {room.phase === 'LOBBY' ? 'Join' : room.phase === 'READY_CHECK' ? 'Playing' : room.phase}

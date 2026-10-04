@@ -255,7 +255,7 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
       )}
 
       {opponentAlert && (
-        <p className="error-line" role="alert" style={{ borderLeftColor: '#3466a8', background: '#e8f0fd', color: '#1d3a6f' }}>
+        <p className="error-line" role="alert" style={{ borderLeftColor: 'var(--border-strong)', background: 'var(--surface-3)', color: 'var(--text)' }}>
           {opponentAlert}
         </p>
       )}
@@ -281,7 +281,7 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
         </button>
         {state?.won && (
           <button id="ms-next-board" onClick={handleNextBoard} disabled={busy}
-            style={{ background: '#1b5e20', color: '#fff', borderColor: '#1b5e20' }}>
+            style={{ background: 'var(--success)', color: 'var(--bg)', borderColor: 'var(--success)' }}>
             Next Board ({state.boardsCleared + 1})
           </button>
         )}
@@ -307,8 +307,8 @@ export function Minesweeper({ roomId, playerId, playerName, onExit }) {
 
           return (
             <div key={opp.playerId} className={`status-strip opponent-strip ${isOvertake ? 'score-overtake' : ''}`}
-              style={{ borderLeft: '3px solid #3466a8', paddingLeft: 10 }}>
-              <span style={{ fontWeight: 700, color: '#3466a8' }}>{opp.playerName}</span>
+              style={{ borderLeft: '3px solid var(--border-strong)', paddingLeft: 10 }}>
+              <span style={{ fontWeight: 700, color: 'var(--text)' }}>{opp.playerName}</span>
               <span>Opened: {opp.clearedFields ?? 0}</span>
               <span>Score: {opp.score ?? 0}</span>
               <span>Boards: {opp.boardsCleared ?? 0}</span>
