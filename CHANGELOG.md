@@ -1734,14 +1734,19 @@ while Home and the game tabs underneath remain clickable.
 
 ### Test-side adaptations (documented, not weakened)
 
-- **Nine pre-game assertions** in `e2e/step6b.spec.ts` (B2 `:130/:141`, B3
-  `:227/:237`, B5 `:357`, B6 `:393/:408/:412/:436`) now expect
-  `getByText('Get Ready')` instead of `Waiting for players`, because a
-  multiplayer room reaches `RoomLobby`'s overlay rather than the game card.
-  **Stricter, not weaker:** `Get Ready` (`RoomLobby.jsx:185`) only renders once
-  the server really reports `roomPhase === 'LOBBY'`, and it does not match the
-  `READY_CHECK` heading (`"Get Ready!"`), which the old card text did not
-  distinguish. The file header records this reasoning.
+- **Nine pre-game assertions** in `e2e/step6b.spec.ts` (B2 `:132/:143`, B3
+  `:229/:239`, B5 `:359`, B6 `:395/:410/:414/:438`) now expect
+  `getByText('Get Ready', { exact: true })` instead of `Waiting for players`,
+  because a multiplayer room reaches `RoomLobby`'s overlay rather than the game
+  card. The routing change made the swap necessary; `{ exact: true }` is what
+  makes it *narrower* than before: Playwright's `getByText` is substring-based,
+  so a bare `getByText('Get Ready')` would also have accepted the `READY_CHECK`
+  heading `"Get Ready!"` and passed while the room was already counting down.
+  Exact-matched, it only renders once the server really reports
+  `roomPhase === 'LOBBY'`. (`RoomLobby.jsx:185`; file header records this.)
+  The original 6b.2 entry claimed that narrowing without having applied
+  `{ exact: true }` - corrected here after review: the claim was wrong as
+  written, the assertion is right as now written.
 - **`NetworkAndDoubleClick.test.jsx` "double-click Join"**: the resolved join
   no longer re-renders the same list row (it hands the room over to the ready
   overlay), so the post-resolution busy check is now
@@ -1786,8 +1791,8 @@ while Home and the game tabs underneath remain clickable.
 
 - `games-frontend/src/components/RoomLobby.jsx` (G1 routing, leave ownership)
 - `games-frontend/src/styles.css` (G2 pointer-events)
-- `games-frontend/src/test/App.test.jsx` (new G1 guard: 2 -> 3 tests here;
-  suite total 89 -> 90)
+- `games-frontend/src/test/App.test.jsx` (new G1 guard + solo-handoff coverage:
+  2 -> 4 tests here; suite total 89 -> 91)
 - `games-frontend/src/test/NetworkAndDoubleClick.test.jsx` (mock export +
   join-hand-off adaptation)
 - `games-frontend/e2e/step6b.spec.ts` (nine assertion texts + B3 owner ready)
@@ -1795,6 +1800,37 @@ while Home and the game tabs underneath remain clickable.
 
 No production dependency added; no gameplay rule changed; no successful-
 response JSON shape changed; no assertion removed, relaxed or skipped.
+
+### Follow-up pass after acceptance (curator notes 1-3)
+
+Accepted as shipped; all three notes were closed in the same session. None of
+them changes what 6b.2 proved.
+
+1. **The "stricter" claim needed `{ exact: true }`.** Playwright's `getByText`
+   is substring-based, so `getByText('Get Ready')` would also have matched the
+   `READY_CHECK` heading `"Get Ready!"` - the claim as first written was wrong.
+   The nine assertions now pass `{ exact: true }`, which makes the claim true
+   (and the assertion narrower than the `Waiting for players` it replaced). See
+   the adapted-assertions bullet above for the corrected wording.
+2. **Solo non-blackjack routing had no test.** For the record the *routing* of
+   that path did not change in 6b.2 - solo non-blackjack went to the lobby
+   before and after; only the multiplayer branch moved - but no current test
+   covered "solo room created in the lobby -> phase poll -> game component",
+   because B5 carried it until F5 turned B5 into a multiplayer room. Added
+   `App.test.jsx:137` "solo non-blackjack rooms hand off from the lobby to the
+   game": asserts the exact heading `^Minesweeper$` replaces
+   `Minesweeper Lobby`, and - the load-bearing part - that `leaveRoom` is
+   **not** called, i.e. case 1 of the ownership effect holds and a handoff does
+   not abandon the match it just started.
+3. **The ownership effect now carries its own comment** (`RoomLobby.jsx:230`),
+   spelling out the three cases the two guards encode - handed off to the game
+   / auth already lost / lobby still owns the membership - plus an explicit
+   warning not to simplify the effect away. The CHANGELOG is no longer the only
+   place that explanation exists.
+
+Re-run after the follow-ups: `npx vitest run` -> 9 files / **91 tests passed**;
+`npm run e2e` -> **6 passed (1.2m)** (`%TEMP%\step6b2\e2e-notes.txt`) with all
+nine assertions exact-matched.
 
 ### Still deferred
 
