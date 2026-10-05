@@ -168,30 +168,45 @@ function App() {
     const roomName = `${displayName}'s Practice`;
 
     try {
-      const summary = await roomsApi.createRoom(roomName, gameType, gameSettings, playerId, displayName);
-      setRoomToken(summary.roomId, summary.playerToken);
-      handleEnterGame(summary.roomId, gameKey);
-    } catch (err) {
-      // Step 6g E: the 500 used to be swallowed here (a bare `catch { ... }`),
-      // which is why quick play looked dead. 5xx can mean the room WAS created
-      // and only the response failed (error after side effect), so refetch the
-      // list first and route into our own room instead of showing an error.
-      let recovered = false;
-      console.log('DEBUG-6G', 'status=', err?.status, 'msg=', err?.message, 'displayName=', displayName, 'roomName=', roomName);
-      if (err?.status >= 500) {
-        try {
-          const rooms = (await roomsApi.listRooms(gameType)) ?? [];
-          console.log('DEBUG-6G', 'refetched=', rooms.length, rooms.map((r) => `${r.roomName}|${r.ownerName}|${r.isSinglePlayer}`));
-          const own = rooms
-            .filter((r) => r.isSinglePlayer && r.roomName === roomName && r.ownerName === displayName)
-            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
-          if (own) {
-            handleEnterGame(own.roomId, gameKey);
-            recovered = true;
+      // Step 6g E (curator-approved correction): one automatic retry instead
+      // of list-routing. A 5xx loses the playerToken - it only ever existed in
+      // the failed response body - and Part C keeps solo rooms out of
+      // GET /api/rooms, so a ghost room can be neither found nor authenticated
+      // into. Retrying the create is the path that actually heals: createRoom
+      // leaves the owner's previous room first (GameRoomService.createRoom:61),
+      // so the ghost is removed rather than stacked, and only a successful
+      // response carries the token the game needs.
+      const createOnce = () => roomsApi.createRoom(roomName, gameType, gameSettings, playerId, displayName);
+      let summary = null;
+      let failure = null;
+      try {
+        summary = await createOnce();
+      } catch (err) {
+        if (err?.status >= 500) {
+          try {
+            summary = await createOnce();
+          } catch (retryErr) {
+            failure = retryErr;
           }
+        } else {
+          failure = err;
+        }
+      }
+
+      if (summary) {
+        setRoomToken(summary.roomId, summary.playerToken);
+        handleEnterGame(summary.roomId, gameKey);
+        return;
+      }
+      // Both attempts failed. A 5xx may still have left a room behind, so
+      // refresh the list once for visibility, then surface the message - the
+      // swallowed error that made "click Quick Play, nothing happens" possible.
+      if (failure?.status >= 500) {
+        try {
+          await roomsApi.listRooms(gameType);
         } catch {}
       }
-      if (!recovered) setLobbyNotice(err?.message || 'Something went wrong');
+      setLobbyNotice(failure?.message || 'Something went wrong');
       setPage('lobby');
     } finally {
       setQuickPlayInFlight(false);
@@ -222,7 +237,6 @@ function App() {
     }
   }
 
-  console.log('DEBUG-6G', 'render page=', page, 'activeGame=', activeGame, 'currentRoom=', JSON.stringify(currentRoom));
   const navGame = pendingNavigationTarget || activeGame;
 
   return (

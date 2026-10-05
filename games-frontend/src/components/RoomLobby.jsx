@@ -332,56 +332,57 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
     };
   }, [activeRoomId, gameKey, onEnterGame]);
 
-  // Step 6g E: the 5xx "error after side effect" case - the room may exist on
-  // the server even though the create request failed. Refetch the list and, if
-  // the room we just asked for is there, hand it back instead of showing an
-  // error. Matching on name + owner + solo flag + newest-createdAt is the
-  // best the summary payload allows (RoomSummary carries no ownerId).
-  async function recoverOwnRoom(roomName, isSinglePlayer, expectedOwnerName) {
-    try {
-      const rooms = (await roomsApi.listRooms(GAME_TYPE_MAP[gameKey])) ?? [];
-      return rooms
-        .filter((r) => r.roomName === roomName && r.isSinglePlayer === isSinglePlayer && r.ownerName === expectedOwnerName)
-        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
-    } catch {
-      return null;
-    }
-  }
-
   async function handleCreateRoom(roomName, gameType, gameSettings, password) {
     setBusy(true);
     setError('');
+    // Step 6g E (curator-approved correction): one automatic retry instead of
+    // list-routing. A 5xx loses the playerToken (it only existed in the failed
+    // response) and, for solo rooms, Part C keeps the room out of the list
+    // entirely - so a ghost can be neither found nor authenticated into.
+    // createRoom leaves the owner's previous room first, so the retry removes
+    // the ghost instead of stacking it (see App.handleQuickPlay).
+    const createOnce = () => roomsApi.createRoom(roomName, gameType, gameSettings, playerId, playerName);
+    let summary = null;
+    let failure = null;
     try {
-      const summary = await roomsApi.createRoom(roomName, gameType, gameSettings, playerId, playerName);
-      setRoomToken(summary.roomId, summary.playerToken);
-      // G1 (step 6b.2): every room that still has a ready step waits in this
-      // lobby - the game components' waiting cards have no way to mark a player
-      // ready, so sending players there meant nobody could ever start a
-      // multiplayer game. Only a solo blackjack room skips straight through.
-      if (summary.isSinglePlayer && gameKey === 'blackjack') {
-        onEnterGame(summary.roomId, gameKey);
-      } else {
-        setActiveRoomId(summary.roomId);
-        // Step 6e B1: refresh the list so the new room shows up right away when
-        // we return to it, instead of waiting for the next 5s poll. The ready
-        // overlay's own /state is fetched immediately by the poll effect above.
-        fetchRooms();
-      }
+      summary = await createOnce();
     } catch (err) {
-      // Step 6g E: on a 5xx the room may have been created before the response
-      // failed - route into it instead of reporting an error.
       if (err.status >= 500) {
-        const own = await recoverOwnRoom(roomName, gameSettings.isSinglePlayer, playerName);
-        if (own) {
-          if (own.isSinglePlayer && gameKey === 'blackjack') {
-            onEnterGame(own.roomId, gameKey);
-          } else {
-            setActiveRoomId(own.roomId);
-          }
-          return;
+        try {
+          summary = await createOnce();
+        } catch (retryErr) {
+          failure = retryErr;
         }
+      } else {
+        failure = err;
       }
-      setError(err.message);
+    }
+    try {
+      if (summary) {
+        setRoomToken(summary.roomId, summary.playerToken);
+        // G1 (step 6b.2): every room that still has a ready step waits in this
+        // lobby - the game components' waiting cards have no way to mark a player
+        // ready, so sending players there meant nobody could ever start a
+        // multiplayer game. Only a solo blackjack room skips straight through.
+        if (summary.isSinglePlayer && gameKey === 'blackjack') {
+          onEnterGame(summary.roomId, gameKey);
+        } else {
+          setActiveRoomId(summary.roomId);
+          // Step 6e B1: refresh the list so the new room shows up right away when
+          // we return to it, instead of waiting for the next 5s poll. The ready
+          // overlay's own /state is fetched immediately by the poll effect above.
+          fetchRooms();
+        }
+        return;
+      }
+      if (failure?.status >= 500) {
+        // Both attempts failed: refresh FIRST (fetchRooms clears the error on
+        // success), then set the message so it survives the refresh.
+        try {
+          await fetchRooms();
+        } catch {}
+      }
+      setError(failure?.message || 'Something went wrong');
     } finally {
       setBusy(false);
       setShowCreateForm(false);
@@ -409,10 +410,16 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         fetchRooms();
       }
     } catch (err) {
-      // Step 6g E: on a 5xx the server state may have moved (the room existed
-      // and the response path failed) - refresh the list so the user sees the
-      // actual state alongside the error.
-      if (err.status >= 500) fetchRooms();
+      // Step 6g E: on a 5xx the server state may have moved - refresh the list
+      // so the user sees the actual state alongside the error. Await it BEFORE
+      // setError: fetchRooms clears the error on success, so setting the
+      // message afterwards is what keeps it on screen (the ordering regression
+      // caught by ErrorSurface "500 on join").
+      if (err.status >= 500) {
+        try {
+          await fetchRooms();
+        } catch {}
+      }
       setError(err.message);
     } finally {
       setBusy(false);

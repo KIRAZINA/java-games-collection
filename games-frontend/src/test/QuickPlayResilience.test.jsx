@@ -4,13 +4,14 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import App from '../App.jsx';
 import { roomsApi, blackjackApi } from '../api/api.js';
 
-// Step 6g E - "click Quick Play, nothing happens" must not be possible again:
+// Step 6g E (curator-approved correction - retry-once) :
 // 1. the Quick Play button is disabled (and labelled "Creating room…") while the
-//    create request is in flight,
+//    create request is in flight, through BOTH attempts of the retry,
 // 2. a reject surfaces as a visible error instead of a silently unchanged screen,
-// 3. a 5xx specifically triggers a list refetch (the room may exist despite the
-//    error - "error after side effect"), and if our own room is in the fresh
-//    list the app routes into it instead of showing the error.
+// 3. a 5xx is retried exactly once (createRoom leaves the owner's previous room
+//    first, so the retry cannot stack ghosts), and only after the retry also
+//    fails is the list refetched and the message shown,
+// 4. if the retry succeeds the game opens - no error, no ghost left behind.
 //
 // The api is spied on directly (not fetch stubbed) so the tests can hold the
 // createRoom promise open to observe the in-flight UI state.
@@ -42,10 +43,11 @@ describe('6g E1 - quick play in-flight state', () => {
   });
 
   it('disables Quick Play with a "Creating room…" label while createRoom is in flight', async () => {
-    let rejectCreate;
+    let rejectFirst;
     const createRoom = vi
       .spyOn(roomsApi, 'createRoom')
-      .mockImplementation(() => new Promise((_, reject) => { rejectCreate = reject; }));
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectFirst = reject; }))
+      .mockRejectedValue(make500());
     vi.spyOn(roomsApi, 'listRooms').mockResolvedValue([]);
 
     const user = userEvent.setup();
@@ -62,10 +64,13 @@ describe('6g E1 - quick play in-flight state', () => {
     // a second click must not start a second create request
     expect(createRoom).toHaveBeenCalledTimes(1);
 
-    rejectCreate(make500());
+    // first attempt fails with a 500 -> the single retry fires while the flag
+    // is still held, then the failure path refetches the list
+    rejectFirst(make500());
+    await waitFor(() => expect(createRoom).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(roomsApi.listRooms).toHaveBeenCalled());
 
-    // once settled the button is back and enabled
+    // once both attempts settled the button is back and enabled
     const settled = await screen.findByRole('button', { name: /Quick Play \(Solo\)/ });
     expect(settled).toBeEnabled();
   });
@@ -77,9 +82,9 @@ describe('6g E2 - a 500 from quick play is surfaced, not swallowed', () => {
     stubNetwork();
   });
 
-  it('shows the server error and refetches the room list on a 500', async () => {
+  it('retries once, then shows the server error and refetches the room list', async () => {
     const listRooms = vi.spyOn(roomsApi, 'listRooms').mockResolvedValue([]);
-    vi.spyOn(roomsApi, 'createRoom').mockRejectedValue(make500('Server exploded'));
+    const createRoom = vi.spyOn(roomsApi, 'createRoom').mockRejectedValue(make500('Server exploded'));
 
     const user = userEvent.setup();
     render(<App />);
@@ -89,22 +94,29 @@ describe('6g E2 - a 500 from quick play is surfaced, not swallowed', () => {
     // the error is visible - this is the exact case that used to render nothing
     expect(await screen.findByRole('alert')).toHaveTextContent('Server exploded');
 
-    // 5xx refetch: the list is pulled again because the room may exist despite
-    // the failed response
-    await waitFor(() => expect(listRooms).toHaveBeenCalledTimes(1));
-    expect(listRooms.mock.calls[0][0]).toBe('BLACKJACK');
+    // exactly one retry: no loop, no third attempt
+    expect(createRoom).toHaveBeenCalledTimes(2);
+
+    // 5xx refetch: the list is pulled again AFTER the final failure (the
+    // lobby's own mount fetch necessarily comes first)
+    await waitFor(() => {
+      const lastCreate = createRoom.mock.invocationCallOrder.at(-1);
+      const lastList = listRooms.mock.invocationCallOrder.at(-1);
+      expect(lastList).toBeGreaterThan(lastCreate);
+    });
+    expect(listRooms.mock.calls.at(-1)[0]).toBe('BLACKJACK');
   });
 });
 
-describe('6g E3 - 500 with the room already created routes into it', () => {
+describe('6g E3 - 500 on the first create is healed by the retry', () => {
   beforeEach(() => {
     vi.stubGlobal('prompt', vi.fn(() => 'Alice'));
     stubNetwork();
   });
 
-  it('refetches the list and enters the own room instead of showing the error', async () => {
-    const soloRoom = {
-      roomId: 'r-ghost-1',
+  it('the retry succeeds, the game opens, and no error is shown', async () => {
+    const summary = {
+      roomId: 'r-retry-1',
       roomName: "Alice's Practice",
       gameType: 'BLACKJACK',
       phase: 'PLAYING',
@@ -117,10 +129,13 @@ describe('6g E3 - 500 with the room already created routes into it', () => {
       lastActivity: new Date().toISOString(),
       timeLimitSeconds: 0,
       isSinglePlayer: true,
-      playerToken: null,
+      playerToken: 'tok-retry-1',
     };
-    vi.spyOn(roomsApi, 'createRoom').mockRejectedValue(make500());
-    vi.spyOn(roomsApi, 'listRooms').mockResolvedValue([soloRoom]);
+    const createRoom = vi
+      .spyOn(roomsApi, 'createRoom')
+      .mockRejectedValueOnce(make500())
+      .mockResolvedValueOnce(summary);
+    vi.spyOn(roomsApi, 'listRooms').mockResolvedValue([]);
     // getRoomState is what the in-room views poll; settle it straight to
     // PLAYING so the Blackjack handoff completes without extra mocking.
     vi.spyOn(roomsApi, 'getRoomState').mockResolvedValue({
@@ -132,7 +147,7 @@ describe('6g E3 - 500 with the room already created routes into it', () => {
     // the routed-into game mounts and bootstraps its own session - resolve it
     // (and the room registration) so no error alert is ever rendered.
     vi.spyOn(blackjackApi, 'createSession').mockResolvedValue({
-      sessionId: 's-ghost',
+      sessionId: 's-retry',
       phase: 'BETTING',
       balance: 100,
       dealerCards: [],
@@ -148,12 +163,18 @@ describe('6g E3 - 500 with the room already created routes into it', () => {
 
     await user.click(screen.getByRole('button', { name: /Blackjack \(Solo\)/ }));
 
-    // the 5xx path refetched the list...
-    await waitFor(() => expect(roomsApi.listRooms).toHaveBeenCalled());
+    // first call 500s, second call is the retry and it succeeds
+    await waitFor(() => expect(createRoom).toHaveBeenCalledTimes(2));
 
-    // ...and the own room was found: the error is NOT shown, the game is.
+    // no error is shown - the failed first attempt healed itself
     expect(screen.queryByRole('alert')).toBeNull();
-    await screen.findByRole('heading', { name: /Blackjack/ }, { timeout: 4000 });
-    expect(roomsApi.getRoomState).toHaveBeenCalledWith('r-ghost-1');
+
+    // the game view is open (exact heading distinguishes it from "Blackjack
+    // Lobby") and it polls the room it was handed
+    await screen.findByRole('heading', { name: /^Blackjack$/ }, { timeout: 4000 });
+    await waitFor(() =>
+      expect(roomsApi.getRoomState).toHaveBeenCalledWith('r-retry-1')
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
