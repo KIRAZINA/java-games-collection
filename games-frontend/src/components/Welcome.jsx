@@ -1,4 +1,7 @@
-export function Welcome({ onStart, onQuickPlay }) {
+// Step 6g E: `creating` is App's quick-play in-flight flag - while a solo room
+// is being created every Quick Play button disables, so a slow 5xx cannot be
+// double-clicked into a second room.
+export function Welcome({ onStart, onQuickPlay, creating }) {
   return (
     <div className="game-layout compact-game" style={{ textAlign: 'center', paddingTop: '2rem' }}>
       <h2 style={{ fontSize: '2.4rem', marginBottom: '0.5rem' }}>Java Games Collection</h2>
@@ -34,23 +37,26 @@ export function Welcome({ onStart, onQuickPlay }) {
         <button
           onClick={() => onQuickPlay('blackjack')}
           className="btn-primary"
+          disabled={creating}
           style={{ padding: '10px 20px', fontSize: '0.95rem', fontWeight: 600 }}
         >
-          🃏 Blackjack (Solo)
+          {creating ? 'Creating room…' : '🃏 Blackjack (Solo)'}
         </button>
         <button
           onClick={() => onQuickPlay('minesweeper')}
           className="btn-primary"
+          disabled={creating}
           style={{ padding: '10px 20px', fontSize: '0.95rem', fontWeight: 600 }}
         >
-          💣 Minesweeper (Solo)
+          {creating ? 'Creating room…' : '💣 Minesweeper (Solo)'}
         </button>
         <button
           onClick={() => onQuickPlay('2048')}
           className="btn-primary"
+          disabled={creating}
           style={{ padding: '10px 20px', fontSize: '0.95rem', fontWeight: 600 }}
         >
-          🔢 2048 (Solo)
+          {creating ? 'Creating room…' : '🔢 2048 (Solo)'}
         </button>
       </div>
     </div>

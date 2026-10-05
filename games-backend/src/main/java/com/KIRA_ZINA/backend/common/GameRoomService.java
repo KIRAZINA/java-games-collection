@@ -11,6 +11,7 @@ import com.KIRA_ZINA.backend.twentyfortyeight.domain.Game2048State;
 import com.KIRA_ZINA.backend.twentyfortyeight.service.Game2048SessionService;
 
 import static com.KIRA_ZINA.backend.common.RoomProgressResponse.PlayerProgress;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -29,6 +30,10 @@ public class GameRoomService {
     private static final Logger log = LoggerFactory.getLogger(GameRoomService.class);
     private static final Duration ROOM_TTL = Duration.ofHours(2);
     private static final Duration EMPTY_ROOM_TTL = Duration.ofMinutes(5);
+    // Step 6g D: a solo room whose owner walked away without a clean leave would
+    // otherwise sit under ROOM_TTL (2h) as a ghost. Solo rooms expire after 10
+    // minutes of inactivity, whether or not they still hold their one player.
+    private static final Duration SOLO_ROOM_TTL = Duration.ofMinutes(10);
     private static final long READY_CHECK_DURATION_MS = 3000;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
@@ -124,8 +129,12 @@ public class GameRoomService {
         }
     }
 
+    // Step 6g C: solo (practice) rooms are never offered to other players -
+    // they stay in the map for their owner (GET /{roomId} and
+    // /player/{playerId} keep working) but are excluded from the public list.
     public List<GameRoom.RoomSummary> listRooms(GameType gameType) {
         return rooms.values().stream()
+                .filter(room -> !room.getSettings().isSinglePlayer())
                 .filter(room -> room.getSettings().gameType() == gameType)
                 .map(GameRoom.RoomSummary::from)
                 .sorted(Comparator.comparing(GameRoom.RoomSummary::lastActivity).reversed())
@@ -134,6 +143,7 @@ public class GameRoomService {
 
     public List<GameRoom.RoomSummary> listAllRooms() {
         return rooms.values().stream()
+                .filter(room -> !room.getSettings().isSinglePlayer())
                 .map(GameRoom.RoomSummary::from)
                 .sorted(Comparator.comparing(GameRoom.RoomSummary::lastActivity).reversed())
                 .collect(Collectors.toList());
@@ -656,6 +666,29 @@ public class GameRoomService {
         throw new SecurityException(PLAYER_TOKEN_FAILURE_MESSAGE);
     }
 
+    /**
+     * Step 6g D: rooms live only in these in-memory maps, so nothing survives a
+     * restart and the sweep is a no-op today - it documents the intent and is
+     * the place to hook persistence cleanup if rooms ever become durable.
+     */
+    @PostConstruct
+    void sweepRoomsOnStartup() {
+        cleanupInactiveRooms();
+    }
+
+    /**
+     * Step 6g D: solo rooms expire on SOLO_ROOM_TTL regardless of occupancy (a
+     * ghost solo room still holds its one player, so the empty/occupied split
+     * below would keep it for 2 hours). Multiplayer rooms keep the old rules.
+     */
+    private boolean isExpired(GameRoom room, Instant now) {
+        boolean isEmpty = room.getPlayerCount() == 0 && room.getSpectatorCount() == 0;
+        Duration ttl = room.getSettings().isSinglePlayer()
+                ? SOLO_ROOM_TTL
+                : (isEmpty ? EMPTY_ROOM_TTL : ROOM_TTL);
+        return Duration.between(room.getLastActivity(), now).compareTo(ttl) > 0;
+    }
+
     @Scheduled(fixedDelay = 60000)
     public void cleanupInactiveRooms() {
         Instant now = Instant.now();
@@ -664,11 +697,7 @@ public class GameRoomService {
         for (Map.Entry<String, GameRoom> entry : rooms.entrySet()) {
             GameRoom room = entry.getValue();
             synchronized (room) {
-                Duration inactiveDuration = Duration.between(room.getLastActivity(), now);
-                boolean isEmpty = room.getPlayerCount() == 0 && room.getSpectatorCount() == 0;
-                if (isEmpty && inactiveDuration.compareTo(EMPTY_ROOM_TTL) > 0) {
-                    toRemove.add(entry.getKey());
-                } else if (!isEmpty && inactiveDuration.compareTo(ROOM_TTL) > 0) {
+                if (isExpired(room, now)) {
                     toRemove.add(entry.getKey());
                 }
             }
@@ -678,13 +707,7 @@ public class GameRoomService {
             GameRoom room = rooms.get(roomId);
             if (room != null) {
                 synchronized (room) {
-                    Duration inactiveDuration = Duration.between(room.getLastActivity(), now);
-                    boolean isEmpty = room.getPlayerCount() == 0 && room.getSpectatorCount() == 0;
-                    if (isEmpty && inactiveDuration.compareTo(EMPTY_ROOM_TTL) > 0) {
-                        rooms.remove(roomId);
-                        roomPlayerSessions.remove(roomId);
-                        playerTokens.remove(roomId);
-                    } else if (!isEmpty && inactiveDuration.compareTo(ROOM_TTL) > 0) {
+                    if (isExpired(room, now)) {
                         rooms.remove(roomId);
                         roomPlayerSessions.remove(roomId);
                         playerTokens.remove(roomId);

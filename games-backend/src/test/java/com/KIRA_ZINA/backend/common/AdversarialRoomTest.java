@@ -8,6 +8,7 @@ import com.KIRA_ZINA.backend.common.exception.ResourceNotFoundException;
 import com.KIRA_ZINA.backend.minesweeper.service.MinesweeperSessionService;
 import com.KIRA_ZINA.backend.twentyfortyeight.service.Game2048SessionService;
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -514,6 +515,57 @@ class AdversarialRoomTest {
                             .isEqualTo(summary.roomId());
                 }
             }
+        }
+    }
+
+    @Nested
+    @DisplayName("10. cleanupInactiveRooms - solo rooms expire after SOLO_ROOM_TTL (Step 6g D)")
+    class Item10_SoloRoomTtl {
+
+        private static GameSettings solo2048() {
+            return new GameSettings(GameType.TWENTY_FORTY_EIGHT, Map.of("size", 4),
+                    false, null, false, 1, 0, true);
+        }
+
+        @Test
+        @DisplayName("solo room idle 11 minutes is swept even though it still holds its owner; idle multiplayer room survives")
+        void soloRoomSweptAfterElevenMinutes_multiplayerSurvives() {
+            String soloOwner = uniqueId("solo-ttl-owner");
+            GameRoom.RoomSummary solo = roomService.createRoom("Solo Ghost", solo2048(), soloOwner, "S");
+            String mpOwner = uniqueId("mp-ttl-owner");
+            GameRoom.RoomSummary mp = roomService.createRoom("MP Room", mp2048(), mpOwner, "M");
+
+            // both rooms idle 11 minutes - beyond the 10m solo TTL, far under the 2h room TTL
+            setLastActivity(requireRoom(solo.roomId()), Instant.now().minus(Duration.ofMinutes(11)));
+            setLastActivity(requireRoom(mp.roomId()), Instant.now().minus(Duration.ofMinutes(11)));
+
+            roomService.cleanupInactiveRooms();
+
+            assertThat(roomService.getRoom(solo.roomId()))
+                    .as("a solo room idle 11 minutes must be swept (the ghost-room bug)")
+                    .isNotPresent();
+            assertThat(roomService.getRoomForPlayer(soloOwner))
+                    .as("the swept room's owner mapping must be cleaned up too")
+                    .isNull();
+            assertThat(roomService.getRoom(mp.roomId()))
+                    .as("a multiplayer room idle 11 minutes is under ROOM_TTL and must stay")
+                    .isPresent();
+            assertThat(roomService.getRoomForPlayer(mpOwner)).isEqualTo(mp.roomId());
+        }
+
+        @Test
+        @DisplayName("solo room idle under 10 minutes survives the sweep")
+        void soloRoomWithinTtlSurvives() {
+            GameRoom.RoomSummary solo =
+                    roomService.createRoom("Fresh Solo", solo2048(), uniqueId("solo-fresh"), "S");
+
+            setLastActivity(requireRoom(solo.roomId()), Instant.now().minus(Duration.ofMinutes(9)));
+
+            roomService.cleanupInactiveRooms();
+
+            assertThat(roomService.getRoom(solo.roomId()))
+                    .as("a solo room idle 9 minutes is under SOLO_ROOM_TTL and must stay")
+                    .isPresent();
         }
     }
 }

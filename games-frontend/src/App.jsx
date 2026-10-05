@@ -40,6 +40,10 @@ function App() {
   );
   const [playerName, setPlayerName] = useState('');
   const [lobbyNotice, setLobbyNotice] = useState('');
+  // Step 6g E: quick-play in-flight flag. Owned here (not in RoomLobby) because
+  // the create call runs here, and it is what disables the Quick Play buttons
+  // on both the Welcome page and the lobby while a room is being created.
+  const [quickPlayInFlight, setQuickPlayInFlight] = useState(false);
 
   useEffect(() => {
     rehydrateRoomTokens();
@@ -123,12 +127,19 @@ function App() {
   }
 
   async function handleQuickPlay(gameKey) {
+    // Step 6g E: "click Quick Play -> nothing happens" must not be possible.
+    // The flag is set before the first await so a second click cannot start a
+    // second create while the first is still in flight.
+    if (quickPlayInFlight) return;
+
     // F2: resolve the display name into a local first. setPlayerName does not
     // commit before the createRoom call below, so reading the state variable
     // here sent ownerName: "" and Part A's @NotBlank returned 400.
     const displayName =
       playerName || prompt('Enter your display name:', 'Player') || `Player-${playerId.slice(-4)}`;
     if (!playerName) setPlayerName(displayName);
+
+    setQuickPlayInFlight(true);
 
     if (currentRoom) {
       try {
@@ -154,19 +165,36 @@ function App() {
       timeLimitSeconds: gameKey === 'blackjack' ? 0 : 60,
       isSinglePlayer: true,
     };
+    const roomName = `${displayName}'s Practice`;
 
     try {
-      const summary = await roomsApi.createRoom(
-        `${displayName}'s Practice`,
-        gameType,
-        gameSettings,
-        playerId,
-        displayName
-      );
+      const summary = await roomsApi.createRoom(roomName, gameType, gameSettings, playerId, displayName);
       setRoomToken(summary.roomId, summary.playerToken);
       handleEnterGame(summary.roomId, gameKey);
-    } catch {
+    } catch (err) {
+      // Step 6g E: the 500 used to be swallowed here (a bare `catch { ... }`),
+      // which is why quick play looked dead. 5xx can mean the room WAS created
+      // and only the response failed (error after side effect), so refetch the
+      // list first and route into our own room instead of showing an error.
+      let recovered = false;
+      console.log('DEBUG-6G', 'status=', err?.status, 'msg=', err?.message, 'displayName=', displayName, 'roomName=', roomName);
+      if (err?.status >= 500) {
+        try {
+          const rooms = (await roomsApi.listRooms(gameType)) ?? [];
+          console.log('DEBUG-6G', 'refetched=', rooms.length, rooms.map((r) => `${r.roomName}|${r.ownerName}|${r.isSinglePlayer}`));
+          const own = rooms
+            .filter((r) => r.isSinglePlayer && r.roomName === roomName && r.ownerName === displayName)
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+          if (own) {
+            handleEnterGame(own.roomId, gameKey);
+            recovered = true;
+          }
+        } catch {}
+      }
+      if (!recovered) setLobbyNotice(err?.message || 'Something went wrong');
       setPage('lobby');
+    } finally {
+      setQuickPlayInFlight(false);
     }
   }
 
@@ -194,6 +222,7 @@ function App() {
     }
   }
 
+  console.log('DEBUG-6G', 'render page=', page, 'activeGame=', activeGame, 'currentRoom=', JSON.stringify(currentRoom));
   const navGame = pendingNavigationTarget || activeGame;
 
   return (
@@ -247,7 +276,7 @@ function App() {
 
       <section className="game-stage">
         {page === 'welcome' && (
-          <Welcome onStart={handleSelectGame} onQuickPlay={handleQuickPlay} />
+          <Welcome onStart={handleSelectGame} onQuickPlay={handleQuickPlay} creating={quickPlayInFlight} />
         )}
         {page === 'lobby' && activeGame && (
           <RoomLobby
@@ -258,6 +287,7 @@ function App() {
             onQuickPlay={handleQuickPlay}
             onAuthLost={handleAuthLost}
             notice={lobbyNotice}
+            creating={quickPlayInFlight}
           />
         )}
         {page === 'game' && activeGame === 'blackjack' && (

@@ -15,6 +15,7 @@
 
     <properties>
         <spring.boot.version>3.3.5</spring.boot.version>
+        <maven.build.timestamp.format>yyyy-MM-dd'T'HH:mm:ss'Z'</maven.build.timestamp.format>
     </properties>
 
     <dependencies>
@@ -71,6 +72,21 @@
                         <goals>
                             <goal>repackage</goal>
                         </goals>
+                    </execution>
+                    <!-- Step 6g B: write META-INF/spring-boot/build-info.properties
+                         (build.version + build.time, plus build.timestamp below)
+                         at package time so GET /actuator/info answers
+                         "which build is deployed?". -->
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                        <configuration>
+                            <additionalProperties>
+                                <timestamp>${maven.build.timestamp}</timestamp>
+                            </additionalProperties>
+                        </configuration>
                     </execution>
                 </executions>
             </plugin>

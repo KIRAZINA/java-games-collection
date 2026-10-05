@@ -26,7 +26,7 @@ function formatTime(seconds) {
   return m > 0 ? `${m}m ${s}s` : `${s}s`;
 }
 
-function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
+function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel, busy }) {
   const [roomName, setRoomName] = useState(`${playerName}'s Room`);
   const [password, setPassword] = useState('');
   const [settings, setSettings] = useState(DEFAULT_SETTINGS[gameKey]?.settings ?? {});
@@ -140,9 +140,11 @@ function CreateRoomForm({ gameKey, playerId, playerName, onSubmit, onCancel }) {
         </label>
 
         <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', paddingTop: 6 }}>
-          <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="submit" className="btn-primary">
-            Create Room
+          <button type="button" onClick={onCancel} disabled={busy}>Cancel</button>
+          {/* Step 6g E: while the create request is in flight the submit button
+              must say what is happening and refuse a second click. */}
+          <button type="submit" className="btn-primary" disabled={busy}>
+            {busy ? 'Creating room…' : 'Create Room'}
           </button>
         </div>
       </form>
@@ -215,7 +217,7 @@ function ReadyCheckOverlay({ roomId, playerId, roomPhase, timeRemaining, onReady
   );
 }
 
-export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickPlay, onAuthLost, notice }) {
+export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickPlay, onAuthLost, notice, creating }) {
   const [rooms, setRooms] = useState([]);
   const [error, setError] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -330,6 +332,22 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
     };
   }, [activeRoomId, gameKey, onEnterGame]);
 
+  // Step 6g E: the 5xx "error after side effect" case - the room may exist on
+  // the server even though the create request failed. Refetch the list and, if
+  // the room we just asked for is there, hand it back instead of showing an
+  // error. Matching on name + owner + solo flag + newest-createdAt is the
+  // best the summary payload allows (RoomSummary carries no ownerId).
+  async function recoverOwnRoom(roomName, isSinglePlayer, expectedOwnerName) {
+    try {
+      const rooms = (await roomsApi.listRooms(GAME_TYPE_MAP[gameKey])) ?? [];
+      return rooms
+        .filter((r) => r.roomName === roomName && r.isSinglePlayer === isSinglePlayer && r.ownerName === expectedOwnerName)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+    } catch {
+      return null;
+    }
+  }
+
   async function handleCreateRoom(roomName, gameType, gameSettings, password) {
     setBusy(true);
     setError('');
@@ -350,6 +368,19 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         fetchRooms();
       }
     } catch (err) {
+      // Step 6g E: on a 5xx the room may have been created before the response
+      // failed - route into it instead of reporting an error.
+      if (err.status >= 500) {
+        const own = await recoverOwnRoom(roomName, gameSettings.isSinglePlayer, playerName);
+        if (own) {
+          if (own.isSinglePlayer && gameKey === 'blackjack') {
+            onEnterGame(own.roomId, gameKey);
+          } else {
+            setActiveRoomId(own.roomId);
+          }
+          return;
+        }
+      }
       setError(err.message);
     } finally {
       setBusy(false);
@@ -378,6 +409,10 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
         fetchRooms();
       }
     } catch (err) {
+      // Step 6g E: on a 5xx the server state may have moved (the room existed
+      // and the response path failed) - refresh the list so the user sees the
+      // actual state alongside the error.
+      if (err.status >= 500) fetchRooms();
       setError(err.message);
     } finally {
       setBusy(false);
@@ -416,12 +451,15 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
       <GameHeader title={`${GAME_LABELS[gameKey]} Lobby`} meta={`${rooms.length} room(s)`} />
 
       <div className="toolbar">
-        <button onClick={fetchRooms} disabled={busy}>Refresh</button>
-        <button onClick={() => onQuickPlay(gameKey)} disabled={busy}
+        <button onClick={fetchRooms} disabled={busy || creating}>Refresh</button>
+        {/* Step 6g E: while quick play's create request is in flight the button
+            says so and refuses a second click - the silent-swallow bug that
+            made "Quick Play does nothing" possible. */}
+        <button onClick={() => onQuickPlay(gameKey)} disabled={busy || creating}
           className="btn-primary">
-          ⚡ Quick Play (Solo)
+          {creating ? 'Creating room…' : '⚡ Quick Play (Solo)'}
         </button>
-        <button onClick={() => setShowCreateForm(true)} disabled={busy}
+        <button onClick={() => setShowCreateForm(true)} disabled={busy || creating}
           className="btn-primary">
           + Create Room
         </button>
@@ -471,6 +509,7 @@ export function RoomLobby({ gameKey, playerId, playerName, onEnterGame, onQuickP
           playerName={playerName}
           onSubmit={handleCreateRoom}
           onCancel={() => setShowCreateForm(false)}
+          busy={busy}
         />
       )}
     </div>
