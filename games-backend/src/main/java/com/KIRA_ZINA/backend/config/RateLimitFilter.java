@@ -40,7 +40,14 @@ public class RateLimitFilter extends OncePerRequestFilter {
     public RateLimitFilter(Environment environment) {
         this.allowedOrigins.add("http://localhost:5173");
         this.allowedOrigins.add("http://localhost:3000");
-        String envOrigins = System.getenv("GAMES_CORS_ALLOWED_ORIGINS");
+        // Step 6g F: prefer Spring's relaxed binding (handles
+        // GAMES_CORS_ALLOWED_ORIGINS, games.cors.allowed-origins, and case
+        // variants - Render's key was the property name, which getenv cannot
+        // see); fall back to the raw env var.
+        String envOrigins = environment.getProperty("games.cors.allowed-origins");
+        if (envOrigins == null || envOrigins.isEmpty()) {
+            envOrigins = System.getenv("GAMES_CORS_ALLOWED_ORIGINS");
+        }
         if (envOrigins != null && !envOrigins.isEmpty()) {
             for (String origin : envOrigins.split(",")) {
                 allowedOrigins.add(origin.trim());

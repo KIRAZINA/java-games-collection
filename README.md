@@ -152,6 +152,8 @@ to set and forward these headers — **do not strip them**:
 
 Operational notes:
 
+- **CORS origins**: `GAMES_CORS_ALLOWED_ORIGINS` must contain every origin that will call the API, comma-separated. A mismatch with the deployed frontend origin is the most common production failure.
+
 - **HTTP→HTTPS redirect** must be performed by the proxy; the app never redirects.
 - **HSTS** must be sent by the proxy; the app never sends `Strict-Transport-Security`.
 - **Optional enforcement**: set `GAMES_REQUIRE_HTTPS=true` and requests arriving
