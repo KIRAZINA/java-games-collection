@@ -2512,3 +2512,162 @@ Tests changed/added:
 - `RoomOpponentCardsTest.java` (new, 4 tests), `Blackjack.test.jsx` (A6),
   `App.test.jsx` + `PollingResilience.test.jsx` (B1 expectation updates),
   `step6b.spec.ts` (B7).
+
+## STEP 6g - production-bug investigation (A) + build-info (B) + solo-room hygiene (C, D) + create resilience (E) + CORS relaxed binding (F)
+
+Issued around two production symptoms - `POST /api/rooms` answering 500 and
+the deployed frontend failing CORS preflights - plus backend housekeeping.
+No gameplay rule changes, no DB, no new production dependency. Parts B-E
+landed first (`61ba7b0`, committed before the corrective edits: frontend was
+3 red there), Part E was then rewritten to the curator-approved retry-once
+design (`7d8e9f7`), Part F is `51bb833`.
+
+### Part A - production 500 on POST /api/rooms: STILL OPEN (no stack trace)
+
+- Symptom: in production, `POST /api/rooms` sometimes answered 500. Local
+  reproduction on the CURRENT code fails: warm creates answer 201 in 6-60ms
+  (this step's live transcript: first cold create 201 in 244ms), and all 270
+  backend tests pass in three consecutive runs.
+- Blocker: no Render logs are reachable from this machine (no credentials,
+  no service URL anywhere in the repo), and the deployed commit is unknown -
+  the trace cannot be reconstructed from the repository.
+- Curator action queued: fetch the Render log/stack trace if a 500 recurs
+  after the Part F redeploy; Part A then closes against the real cause.
+- Not papered over: Part E treats 5xx as a class (one retry, then a visible
+  error + list refresh), so whatever class of failure A turns out to be, the
+  user-visible blast radius is already bounded.
+
+### Part B - build-info endpoint (which build is deployed?)
+
+- `pom.xml:76-83`: spring-boot-maven-plugin `build-info` goal writes
+  `META-INF/spring-boot/build-info.properties` at package time.
+- `application.properties:33-44`: exposes exactly health + info
+  (`management.endpoints.web.exposure.include=health,info`,
+  `management.endpoint.info.enabled=true`, `management.info.env.enabled=true`).
+- Live, packaged jar this step: `GET /actuator/info` -> 200 with
+  `{"app":{"name":"games-backend"},"build":{"version":"1.0-SNAPSHOT",
+  "artifact":"games-backend",...,"timestamp":"2026-10-05T15:29:24Z"}}` -
+  the timestamp matches the jar this run built.
+
+### Part C - solo rooms are not public list content
+
+- `GameRoomService.listRooms`/`listAllRooms` (`:135-150`) filter
+  `!room.getSettings().isSinglePlayer()` before mapping summaries. Solo
+  rooms stay in the map for their owner (`GET /{roomId}`, `/player/{playerId}`
+  unchanged) - only the public offer list drops them, so strangers can no
+  longer join a practice room that is already PLAYING.
+- Test `SoloRoomVisibilityTest` (new, 2 tests): solo room absent from the
+  public list while a multiplayer room stays listed (untyped and typed
+  list); owner-scoped lookup + owner list still contain it.
+- Live: solo create -> 201, immediate `GET /api/rooms` -> `[]` (transcript
+  under Verification).
+
+### Part D - solo room TTL (10 minutes, occupancy-independent)
+
+- `SOLO_ROOM_TTL = 10 min` (`GameRoomService:33-36`); `isExpired` (`:684-690`)
+  routes solo rooms to it regardless of occupancy - a ghost solo room still
+  holds its one player, so the old empty/occupied split (EMPTY_ROOM_TTL 5min /
+  ROOM_TTL 2h) would keep it for 2 hours. Multiplayer rules unchanged; the
+  existing 60s `cleanupInactiveRooms` sweep (`:692-717`) plus the startup
+  sweep do the removal.
+- Tests `AdversarialRoomTest` +2: `soloRoomSweptAfterElevenMinutes_multiplayerSurvives`,
+  `soloRoomWithinTtlSurvives`.
+
+### Part E - create/join resilience: retry-once (curator-corrected design)
+
+Design decision recorded before the rewrite: the spec-literal "route into
+the room from the refetched list" is a dead end - a 5xx response loses the
+`playerToken` (it exists only in the failed response body), `GET
+/api/rooms/player/{playerId}` goes through `verifyPlayerTokenForPlayer` and
+403s without it (`GameRoomService:660`), a solo room is PLAYING so `join`
+is rejected (`:166`), and Part C now hides solo rooms from the list anyway.
+The curator chose **retry the create once**: success -> enter with the fresh
+token; second failure -> refetch the list for visibility, then show the
+error. The retry cannot stack ghosts: `createRoom` leaves the owner's
+previous room first (`:61`) and `leaveRoom` deletes empty rooms immediately
+(`:223`), so attempt #2 removes attempt #1's room.
+
+- `App.handleQuickPlay`: one in-flight flag held across both attempts
+  (Welcome's `creating` prop disables all three Quick Play buttons and
+  labels them "Creating room…", so a slow 5xx cannot be double-clicked into
+  a second room), one retry on status >= 500, list refetch AFTER the final
+  failure, message set last - `fetchRooms()` clears errors on success, so
+  the ordering is the fix, not incidental.
+- `RoomLobby.handleCreateRoom`: same retry-once; the draft's `recoverOwnRoom`
+  list-routing helper removed.
+- `RoomLobby.handleJoinRoom`: on 5xx `await fetchRooms()` BEFORE
+  `setError(err.message)` - fixes the ErrorSurface Area 4 regression where
+  the refetch's success path wiped the message it had just set.
+- Debug leftovers `DEBUG-6G` removed (2 call sites).
+- Tests: `QuickPlayResilience.test.jsx` rewritten to the new contract - E1
+  in-flight (create held open -> disabled label, one click = one call, first
+  reject fires exactly the retry, both settle -> button re-enabled); E2 both
+  attempts fail -> alert shows the server message, `createRoom` called
+  exactly 2x, last `listRooms` invocation strictly after the last
+  `createRoom` invocation (`invocationCallOrder`) with arg `BLACKJACK`; E3
+  first-500 + retry success -> no alert, game heading `/^Blackjack$/` (exact
+  match distinguishes it from "Blackjack Lobby"), `getRoomState` called with
+  the handed room id.
+
+### Part F - CORS preflight 403: relaxed binding (root cause found by curator)
+
+- Root cause: the Render env key is `games.cors.allowed-origins`, but
+  `RateLimitFilter` read only `System.getenv("GAMES_CORS_ALLOWED_ORIGINS")` -
+  `getenv` has no relaxed binding, so the configured origin never reached
+  `allowedOrigins` and every cross-origin preflight 403'd in production.
+- Fix (`RateLimitFilter:40-51`): `environment.getProperty("games.cors.allowed-origins")`
+  first (Spring relaxed binding accepts the dotted key, the SCREAMING_SNAKE
+  env key, and case variants), raw `getenv` kept as fallback. Localhost
+  defaults untouched; unknown origins still 403 - no over-permissive drift.
+- `README.md` Proxy Contract: GAMES_CORS_ALLOWED_ORIGINS must contain every
+  origin the deployed frontend is served from.
+- Test `CorsOriginFromPropertyTest` (new, 3 tests): property-provided origin
+  passes preflight 200 with the ACAO echo, unknown origin 403, localhost
+  default 200 (MockEnvironment / MockHttpServletRequest).
+- Live proof, packaged jar, process env in Render's exact key style:
+  preflight from `https://java-games-collection-frontend.onrender.com` ->
+  **200** + `Access-Control-Allow-Origin` echo (the old code would have
+  returned the production 403); control origin `https://evil.example.org`
+  -> **403**.
+- Curator action (their side): rename the Render env key to the documented
+  name, then redeploy.
+
+### Verification
+
+- Backend: `mvn test -pl games-backend` x3, raw output
+  `%TEMP%\opencode\6g\mvn-run{1,2,3}.txt`: each run
+  `Tests run: 270, Failures: 0, Errors: 0, Skipped: 0` + `BUILD SUCCESS`
+  (267 baseline + 3 CORS tests).
+- Frontend: `npx vitest run` (`vitest-2.txt`): 12 files, 110 tests passed.
+  The first-draft state was 107 passed / 3 failed (QuickPlayResilience
+  E2/E3, ErrorSurface Area 4) - all three were the draft's list-routing and
+  error-ordering, closed by Part E.
+- E2E: `E2E_REBUILD=1 npm run e2e` (`e2e-1.txt`): B1-B7 all ok,
+  `7 passed (1.6m)`.
+- Live transcript, packaged jar on port 18080 with the process env key set:
+
+```
+OPTIONS /api/rooms Origin=https://java-games-collection-frontend.onrender.com -> 200
+  Access-Control-Allow-Origin: https://java-games-collection-frontend.onrender.com
+OPTIONS /api/rooms Origin=https://evil.example.org -> 403
+GET /actuator/info -> 200 {"app":{"name":"games-backend"},"build":{...,"timestamp":"2026-10-05T15:29:24Z"}}
+POST /api/rooms {"roomName":"Curl Solo",...,"isSinglePlayer":true} -> 201 in 0.244884s
+GET /api/rooms -> 200 []
+```
+
+- Constraints held: no new production dependency, no `@Disable`, no
+  blackjack lifecycle changes, no DB schema, commit-before-modify observed.
+
+Production files changed:
+- games-backend: `RateLimitFilter.java` (F); from the draft: `pom.xml`,
+  `application.properties`, `GameRoomService.java`.
+- games-frontend: `App.jsx`, `RoomLobby.jsx` (E), `Welcome.jsx` (`creating`
+  prop, from the draft).
+
+Tests changed/added:
+- `CorsOriginFromPropertyTest.java` (new, 3), `SoloRoomVisibilityTest.java`
+  (new, 2), `AdversarialRoomTest.java` (+2 TTL), `QuickPlayResilience.test.jsx`
+  (rewritten, 3).
+
+Commits: `61ba7b0` (B-E first draft), `51bb833` (Part F), `7d8e9f7`
+(Part E retry-once), this doc.
